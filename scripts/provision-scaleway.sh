@@ -2,7 +2,9 @@
 set -euo pipefail
 
 # Deployment parameters. Override any value in the environment, for example:
-# DNS_NAME=buzz.example.com SSH_CIDR=203.0.113.7/32 ./scripts/provision-scaleway.sh
+# SSH_CIDR=203.0.113.7/32 ./scripts/provision-scaleway.sh
+# Set DNS_NAME=buzz.example.com only when using a domain you control. Otherwise
+# the provisioner uses Scaleway's <instance-uuid>.pub.instances.scw.cloud name.
 SERVER_NAME="${SERVER_NAME:-buzz-selfhost}"
 REGION="${REGION:-nl-ams}"
 ZONE="${ZONE:-${REGION}-1}"
@@ -23,8 +25,9 @@ for command_name in scw jq; do
   command -v "${command_name}" >/dev/null 2>&1 || die "Required command not found: ${command_name}"
 done
 
-[[ -n "${DNS_NAME}" ]] || die "Set DNS_NAME to the relay FQDN, for example DNS_NAME=buzz.example.com"
-[[ "${DNS_NAME}" != *://* && "${DNS_NAME}" == *.* ]] || die "DNS_NAME must be a hostname, not a URL"
+if [[ -n "${DNS_NAME}" ]]; then
+  [[ "${DNS_NAME}" != *://* && "${DNS_NAME}" == *.* ]] || die "DNS_NAME must be a hostname, not a URL"
+fi
 [[ "${SSH_CIDR}" == */* ]] || die "SSH_CIDR must be a CIDR such as 203.0.113.7/32"
 [[ "${DNS_TTL}" =~ ^[0-9]+$ ]] || die "DNS_TTL must be an integer"
 
@@ -193,50 +196,55 @@ public_ip="$(jq -r '
 [[ -n "${public_ip}" ]] || die "Instance exists but no public IPv4 address was found"
 info "public IPv4: ${public_ip}"
 
-dns_zones_json="$(scw dns zone list -o json)"
-dns_zone="$(
-  items <<<"${dns_zones_json}" |
-    jq -rs --arg fqdn "${DNS_NAME%.}" '
-      map(
-        . + {
-          _zone: (
-            if ((.subdomain // "") | length) > 0
-            then (.subdomain + "." + .domain)
-            else (.dns_zone // .domain // "")
-            end
-          )
-        }
-      ) |
-      map(select((._zone | length) > 0)) |
-      map(select(. as $zone | ($fqdn == $zone._zone) or ($fqdn | endswith("." + $zone._zone)))) |
-      sort_by(._zone | length) |
-      last._zone // empty
-    '
-)"
-
-if [[ -n "${dns_zone}" ]]; then
-  if [[ "${DNS_NAME%.}" == "${dns_zone}" ]]; then
-    record_name=""
-  else
-    record_name="${DNS_NAME%."${dns_zone}"}"
-    record_name="${record_name%.}"
-  fi
-
-  record_json="$(scw dns record list "${dns_zone}" type=A name="${record_name}" -o json)"
-  if items <<<"${record_json}" | jq -es --arg ip "${public_ip}" \
-    'map(.data) | sort == ([$ip] | sort)' >/dev/null; then
-    existing "DNS A ${DNS_NAME%.} -> ${public_ip}"
-  else
-    scw dns record set "${dns_zone}" \
-      name="${record_name}" \
-      type=A \
-      ttl="${DNS_TTL}" \
-      values.0="${public_ip}" >/dev/null
-    created "DNS A ${DNS_NAME%.} -> ${public_ip}"
-  fi
+if [[ -z "${DNS_NAME}" ]]; then
+  DNS_NAME="${server_id}.pub.instances.scw.cloud"
+  existing "Scaleway instance DNS ${DNS_NAME} (managed automatically)"
 else
-  printf '\nDNS zone for %s is not hosted in the active Scaleway project.\n' "${DNS_NAME%.}"
-  printf 'Create this record manually: %s. %s IN A %s\n' "${DNS_NAME%.}" "${DNS_TTL}" "${public_ip}"
+  dns_zones_json="$(scw dns zone list -o json)"
+  dns_zone="$(
+    items <<<"${dns_zones_json}" |
+      jq -rs --arg fqdn "${DNS_NAME%.}" '
+        map(
+          . + {
+            _zone: (
+              if ((.subdomain // "") | length) > 0
+              then (.subdomain + "." + .domain)
+              else (.dns_zone // .domain // "")
+              end
+            )
+          }
+        ) |
+        map(select((._zone | length) > 0)) |
+        map(select(. as $zone | ($fqdn == $zone._zone) or ($fqdn | endswith("." + $zone._zone)))) |
+        sort_by(._zone | length) |
+        last._zone // empty
+      '
+  )"
+
+  if [[ -n "${dns_zone}" ]]; then
+    if [[ "${DNS_NAME%.}" == "${dns_zone}" ]]; then
+      record_name=""
+    else
+      record_name="${DNS_NAME%."${dns_zone}"}"
+      record_name="${record_name%.}"
+    fi
+
+    record_json="$(scw dns record list "${dns_zone}" type=A name="${record_name}" -o json)"
+    if items <<<"${record_json}" | jq -es --arg ip "${public_ip}" \
+      'map(.data) | sort == ([$ip] | sort)' >/dev/null; then
+      existing "DNS A ${DNS_NAME%.} -> ${public_ip}"
+    else
+      scw dns record set "${dns_zone}" \
+        name="${record_name}" \
+        type=A \
+        ttl="${DNS_TTL}" \
+        values.0="${public_ip}" >/dev/null
+      created "DNS A ${DNS_NAME%.} -> ${public_ip}"
+    fi
+  else
+    printf '\nDNS zone for %s is not hosted in the active Scaleway project.\n' "${DNS_NAME%.}"
+    printf 'Create this record manually: %s. %s IN A %s\n' "${DNS_NAME%.}" "${DNS_TTL}" "${public_ip}"
+  fi
 fi
 
 printf '\nProvisioning complete.\n'
