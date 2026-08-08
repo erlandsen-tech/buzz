@@ -1,0 +1,90 @@
+services:
+  goose-agent:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.goose
+    environment:
+      # Use the public URL so the relay sees the same community host as Desktop.
+      BUZZ_RELAY_URL: ${BUZZ_AGENT_RELAY_URL:?set BUZZ_AGENT_RELAY_URL}
+      BUZZ_PRIVATE_KEY: ${BUZZ_AGENT_PRIVATE_KEY:?set BUZZ_AGENT_PRIVATE_KEY}
+      NOSTR_PRIVATE_KEY: ${BUZZ_AGENT_PRIVATE_KEY:?set BUZZ_AGENT_PRIVATE_KEY}
+      BUZZ_AUTH_TAG: ${BUZZ_AGENT_AUTH_TAG:?set BUZZ_AGENT_AUTH_TAG}
+      BUZZ_ACP_AGENT_COMMAND: goose
+      BUZZ_ACP_AGENT_ARGS: acp
+      BUZZ_ACP_MCP_COMMAND: buzz-dev-mcp
+      BUZZ_ACP_MODEL: ${BUZZ_AGENT_MODEL:?set BUZZ_AGENT_MODEL}
+      BUZZ_ACP_AGENTS: ${BUZZ_AGENT_POOL_SIZE:-1}
+      BUZZ_ACP_RESPOND_TO: ${BUZZ_AGENT_RESPOND_TO:-owner-only}
+      BUZZ_ACP_EXIT_AFTER_INACTIVITY: ${BUZZ_AGENT_EXIT_AFTER_INACTIVITY:-0}
+      GOOSE_PROVIDER: openrouter
+      GOOSE_MODEL: ${BUZZ_AGENT_MODEL:?set BUZZ_AGENT_MODEL}
+      GOOSE_MODE: ${BUZZ_AGENT_GOOSE_MODE:-auto}
+      GOOSE_TELEMETRY_ENABLED: "false"
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY}
+    extra_hosts:
+      # Route the public hostname back to Caddy on this VM while preserving the
+      # Host header/community boundary and the public TLS certificate.
+      - "${BUZZ_DOMAIN:?set BUZZ_DOMAIN}:host-gateway"
+    volumes:
+      - buzz-goose-home:/home/agent
+      - buzz-goose-workspace:/workspace
+    working_dir: /workspace
+    init: true
+    stop_grace_period: 30s
+    # Owner !shutdown and inactivity exits are zero; only abnormal failures restart.
+    restart: on-failure:5
+    depends_on:
+      relay:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      # Used only by the root entrypoint before it execs the harness as uid 1000.
+      - CHOWN
+      - SETGID
+      - SETUID
+    networks:
+      - buzz-net
+
+# Codex/ChatGPT subscription example — intentionally disabled until its custom
+# image exists. Headless auth transport has been validated; refresh behavior is
+# documented from the supported Codex flow but was not forced in that test.
+# The image must contain the sprig ABI plus Node, Codex CLI, and codex-acp, and
+# MUST be referenced by digest.
+#
+#  codex-agent:
+#    image: registry.example/buzz-codex-agent@sha256:<64-hex-digest>
+#    environment:
+#      BUZZ_RELAY_URL: ${BUZZ_AGENT_RELAY_URL}
+#      BUZZ_PRIVATE_KEY: ${BUZZ_CODEX_AGENT_PRIVATE_KEY}
+#      NOSTR_PRIVATE_KEY: ${BUZZ_CODEX_AGENT_PRIVATE_KEY}
+#      BUZZ_AUTH_TAG: ${BUZZ_CODEX_AGENT_AUTH_TAG}
+#      BUZZ_ACP_AGENT_COMMAND: codex-acp
+#      BUZZ_ACP_AGENT_ARGS: ""
+#      BUZZ_ACP_MODEL: ${BUZZ_CODEX_MODEL}
+#      # auth.json refresh tokens are single-use. Never raise this pool above 1.
+#      BUZZ_ACP_AGENTS: "1"
+#      BUZZ_ACP_RESPOND_TO: owner-only
+#      CODEX_HOME: /home/agent/.codex
+#    volumes:
+#      # Must be writable for refresh-token updates and exclusive to this one
+#      # container. Restrict the host directory (0700, auth.json 0600).
+#      - ${CODEX_HOME_HOST_PATH}:/home/agent/.codex:rw
+#      - buzz-codex-workspace:/workspace
+#    working_dir: /workspace
+#    restart: on-failure:5
+#    depends_on:
+#      relay:
+#        condition: service_healthy
+#    networks:
+#      - buzz-net
+
+volumes:
+  buzz-goose-home:
+    labels:
+      com.buzz.volume: goose-agent-home
+  buzz-goose-workspace:
+    labels:
+      com.buzz.volume: goose-agent-workspace
