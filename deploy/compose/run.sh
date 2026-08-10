@@ -4,6 +4,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
+# Compose profile switches: shell environment wins, then .env, then off.
+# bootstrap.sh persists BUZZ_COMPOSE_TLS=true in .env so TLS survives new shells.
+env_file_value() {
+  [[ -f .env ]] || return 0
+  grep -E "^$1=" .env | tail -n 1 | cut -d= -f2- || true
+}
+BUZZ_COMPOSE_TLS="${BUZZ_COMPOSE_TLS:-$(env_file_value BUZZ_COMPOSE_TLS)}"
+BUZZ_COMPOSE_DEV="${BUZZ_COMPOSE_DEV:-$(env_file_value BUZZ_COMPOSE_DEV)}"
+BUZZ_COMPOSE_AGENTS="${BUZZ_COMPOSE_AGENTS:-$(env_file_value BUZZ_COMPOSE_AGENTS)}"
+
 COMPOSE_FILES=(-f compose.yml)
 if [[ "${BUZZ_COMPOSE_TLS:-false}" == "true" ]]; then
   COMPOSE_FILES+=(-f compose.caddy.yml)
@@ -24,8 +34,9 @@ require_env() {
     cat >&2 <<'MSG'
 Missing deploy/compose/.env.
 
-Copy .env.example to .env and replace every CHANGE_ME value, or run the bootstrap
-script once it lands. Do not start production with generated secrets missing.
+Run ./bootstrap.sh --domain <your-domain> to generate it, or copy .env.example
+to .env and replace every CHANGE_ME value by hand. Do not start production with
+generated secrets missing.
 MSG
     exit 1
   fi
@@ -123,7 +134,7 @@ Commands:
   invocations to avoid same-second timestamp collisions in the kind:13534
   roster event. Do not use parallel adds (e.g. xargs -P).
 
-Environment switches:
+Environment switches (shell environment wins, then .env):
   BUZZ_COMPOSE_TLS=true   Include compose.caddy.yml for automatic HTTPS
   BUZZ_COMPOSE_DEV=true   Include compose.dev.yml for local admin ports/tools
   BUZZ_COMPOSE_AGENTS=true

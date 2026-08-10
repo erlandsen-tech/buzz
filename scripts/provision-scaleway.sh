@@ -14,6 +14,9 @@ SECURITY_GROUP_NAME="${SECURITY_GROUP_NAME:-${SERVER_NAME}-web}"
 DNS_NAME="${DNS_NAME:-}"
 SSH_CIDR="${SSH_CIDR:-0.0.0.0/0}"
 DNS_TTL="${DNS_TTL:-300}"
+REPO_URL="${REPO_URL:-https://github.com/block/buzz.git}"
+REPO_BRANCH="${REPO_BRANCH:-main}"
+INSTALL_DIR="/opt/buzz-selfhost"
 MANAGED_TAG="buzz-selfhost:${SERVER_NAME}"
 
 created() { printf '[created] %s\n' "$*"; }
@@ -153,6 +156,23 @@ server_json="$(
 )"
 
 if [[ -z "${server_json}" ]]; then
+  # First boot installs Docker CE (get.docker.com tracks current Compose v2,
+  # which must be >= 2.24.4 for the !reset tag in compose.caddy.yml) and clones
+  # the repo so the box has a git-based update path. Applies to new instances
+  # only; cloud-init does not rerun on existing servers.
+  cloud_init_file="$(mktemp)"
+  trap 'rm -f "${cloud_init_file}"' EXIT
+  cat >"${cloud_init_file}" <<EOF
+#cloud-config
+package_update: true
+packages:
+  - git
+runcmd:
+  - curl -fsSL https://get.docker.com | sh
+  - systemctl enable --now docker
+  - git clone --branch ${REPO_BRANCH} ${REPO_URL} ${INSTALL_DIR}
+  - printf 'Buzz selfhost: cd ${INSTALL_DIR}/deploy/compose && ./bootstrap.sh --domain <dns> && ./run.sh start\n' > /etc/motd
+EOF
   server_json="$(scw instance server create \
     name="${SERVER_NAME}" \
     type="${INSTANCE_TYPE}" \
@@ -160,9 +180,10 @@ if [[ -z "${server_json}" ]]; then
     ip=new \
     tags.0="${MANAGED_TAG}" \
     security-group-id="${security_group_id}" \
+    cloud-init=@"${cloud_init_file}" \
     zone="${ZONE}" \
     -o json)"
-  created "instance ${SERVER_NAME} with a flexible public IP"
+  created "instance ${SERVER_NAME} with a flexible public IP (cloud-init: Docker + repo clone)"
 else
   jq -e --arg tag "${MANAGED_TAG}" '(.tags // []) | index($tag) != null' \
     <<<"${server_json}" >/dev/null ||
@@ -252,3 +273,17 @@ printf 'Instance ID: %s\n' "${server_id}"
 printf 'Public IPv4: %s\n' "${public_ip}"
 printf 'SSH: ssh root@%s\n' "${public_ip}"
 printf 'Relay DNS: %s\n' "${DNS_NAME%.}"
+cat <<EOF
+
+Next steps (cloud-init needs a few minutes on first boot to install Docker
+and clone ${REPO_URL} to ${INSTALL_DIR}; check with: cloud-init status --wait):
+
+  ssh root@${public_ip}
+  cd ${INSTALL_DIR}/deploy/compose
+  ./bootstrap.sh --domain ${DNS_NAME%.} --owner-pubkey <your-64-hex-pubkey>
+  ./run.sh start
+  curl -fsS https://${DNS_NAME%.}/_liveness
+
+If SSH_CIDR was left at 0.0.0.0/0, narrow it and re-run this script:
+  SSH_CIDR=<your-ip>/32 $0
+EOF

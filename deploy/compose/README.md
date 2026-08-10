@@ -7,21 +7,32 @@ the root `docker-compose.yml`, which remains local development infrastructure.
 
 ```bash
 cd deploy/compose
-cp .env.example .env
-$EDITOR .env       # replace every CHANGE_ME value
+./bootstrap.sh --domain buzz.example.com --owner-pubkey <your-64-hex-pubkey>
 ./run.sh start
+curl -fsS https://buzz.example.com/_liveness
 ```
 
-For a public VPS with automatic Let's Encrypt certificates:
+`bootstrap.sh` generates `.env` from `.env.example` with hex secrets (URL-safe —
+they are interpolated into connection URLs like `redis://:<password>@…`), fills
+every domain-derived value, and persists `BUZZ_COMPOSE_TLS=true` so `run.sh`
+includes the Caddy/Let's Encrypt override in every shell. To configure by hand
+instead, copy `.env.example` to `.env` and replace every `CHANGE_ME` value.
+
+## Scaleway
+
+`scripts/provision-scaleway.sh` (from the repo root, needs `scw` + `jq`
+authenticated against your project) creates a security group (SSH/80/443), a
+small instance with a public IP, and DNS. New instances install Docker CE and
+clone this repo to `/opt/buzz-selfhost` via cloud-init on first boot.
 
 ```bash
-cd deploy/compose
-BUZZ_COMPOSE_TLS=true ./run.sh start
+SSH_CIDR=<your-ip>/32 ./scripts/provision-scaleway.sh
+ssh root@<public-ip>          # then follow the printed next steps
 ```
 
-The bootstrap script should eventually replace manual `.env` editing for normal
-users. It is responsible for generating stable secrets and, optionally, an owner
-keypair.
+Without `DNS_NAME=<domain-you-control>`, the instance's automatic
+`<instance-id>.pub.instances.scw.cloud` name is used — Let's Encrypt issues
+for it, so TLS works with zero DNS setup.
 
 ## Production notes
 
@@ -52,10 +63,14 @@ Before sharing an install link publicly, verify a fresh install with:
 
 ```bash
 cd deploy/compose
-cp .env.example .env
-$EDITOR .env
+./bootstrap.sh --domain <domain> --owner-pubkey <hex>
 ./run.sh config
 ./run.sh start
-curl -fsS "http://127.0.0.1:$(grep -E '^BUZZ_HTTP_PORT=' .env | cut -d= -f2-)/_liveness"
 ./run.sh status
+curl -fsS "https://<domain>/_liveness"
+# WebSocket upgrade through Caddy must return 101:
+curl -s --http1.1 -o /dev/null -w '%{http_code}\n' \
+  -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+  -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+  "https://<domain>/"
 ```
