@@ -60,6 +60,20 @@ pub enum DedupMode {
     Queue,
 }
 
+/// Whether the harness publishes the agent's streamed final text as the
+/// channel reply when a turn ends without the agent having sent a message
+/// through the relay itself.
+///
+/// - `auto` (default) — publish the accumulated `agent_message_chunk` text as
+///   a threaded reply to the triggering event when no send occurred.
+/// - `off` — never publish; replies only reach the channel when the agent
+///   calls the message-send tool (pre-existing behavior).
+#[derive(Debug, Clone, Copy, PartialEq, clap::ValueEnum)]
+pub enum DeliverFinal {
+    Auto,
+    Off,
+}
+
 /// How to handle new @mentions while a turn is already in-flight for that channel.
 #[derive(Debug, Clone, Copy, PartialEq, clap::ValueEnum)]
 pub enum MultipleEventHandling {
@@ -339,6 +353,16 @@ pub struct CliArgs {
     #[arg(long, env = "BUZZ_ACP_DEDUP", default_value = "queue", value_enum)]
     pub dedup: DedupMode,
 
+    /// Publish the agent's streamed final text as the channel reply when the
+    /// turn ends without the agent having sent a message itself.
+    #[arg(
+        long,
+        env = "BUZZ_ACP_DELIVER_FINAL",
+        default_value = "auto",
+        value_enum
+    )]
+    pub deliver_final: DeliverFinal,
+
     /// How to handle new @mentions while a turn is already in-flight.
     /// steer (default): cancel+re-prompt, framing the new mention as a message
     /// that arrived mid-task — the agent keeps working and weaves it in.
@@ -509,6 +533,8 @@ pub struct Config {
     pub initial_message: Option<String>,
     pub subscribe_mode: SubscribeMode,
     pub dedup_mode: DedupMode,
+    /// Fallback delivery of streamed agent text as the channel reply.
+    pub deliver_final: DeliverFinal,
     pub multiple_event_handling: MultipleEventHandling,
     pub ignore_self: bool,
     pub kinds_override: Option<Vec<u32>>,
@@ -1076,6 +1102,7 @@ impl Config {
             initial_message: args.initial_message,
             subscribe_mode: args.subscribe,
             dedup_mode: args.dedup,
+            deliver_final: args.deliver_final,
             multiple_event_handling: args.multiple_event_handling,
             ignore_self: !args.no_ignore_self,
             kinds_override: args.kinds,
@@ -1450,6 +1477,7 @@ mod tests {
             initial_message: None,
             subscribe_mode: mode,
             dedup_mode: DedupMode::Queue,
+            deliver_final: DeliverFinal::Auto,
             multiple_event_handling: MultipleEventHandling::Queue,
             ignore_self: true,
             kinds_override: None,
@@ -2308,6 +2336,25 @@ channels = "ALL"
     fn test_default_config_rejects_interactive_permissions() {
         let config = test_config(SubscribeMode::Mentions);
         assert_eq!(config.permission_mode, PermissionMode::DontAsk);
+    }
+
+    #[test]
+    fn test_deliver_final_value_enum_and_default() {
+        use clap::ValueEnum;
+        assert_eq!(
+            DeliverFinal::from_str("auto", true).unwrap(),
+            DeliverFinal::Auto
+        );
+        assert_eq!(
+            DeliverFinal::from_str("off", true).unwrap(),
+            DeliverFinal::Off
+        );
+        assert!(DeliverFinal::from_str("always", true).is_err());
+        // Default when the flag/env is absent must be Auto.
+        assert_eq!(
+            test_config(SubscribeMode::All).deliver_final,
+            DeliverFinal::Auto
+        );
     }
 
     #[test]

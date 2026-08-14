@@ -13,6 +13,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio_util::codec::{FramedRead, LinesCodec, LinesCodecError};
 
+use crate::capture::TurnCapture;
 use crate::observer::{ObserverContext, ObserverHandle};
 use crate::usage::{TurnUsage, UsageTracker};
 
@@ -211,6 +212,9 @@ pub struct AcpClient {
     /// deltas. Both goose and buzz-agent emit this notification; goose gates
     /// on client capability advertisement, buzz-agent emits unconditionally.
     goose_usage: UsageTracker,
+    /// Per-turn capture of streamed agent text and relay-send tool calls,
+    /// consumed by the pool's final-message delivery fallback.
+    turn_capture: TurnCapture,
 }
 
 /// Recursively merge `overlay` into `base`, with `overlay` winning on scalar/shape
@@ -550,6 +554,7 @@ impl AcpClient {
             steering_supported: false,
             steer_rx: None,
             goose_usage: UsageTracker::default(),
+            turn_capture: TurnCapture::default(),
         })
     }
 
@@ -777,6 +782,10 @@ impl AcpClient {
         // misattributed to this turn.
         self.goose_usage.begin_turn(session_id);
 
+        // Reset the per-turn transcript/send capture at the same point, so
+        // setup-prompt prose recorded outside a real turn is discarded.
+        self.turn_capture.begin_turn();
+
         self.last_prompt_id = Some(self.next_id);
         let id = self.next_id;
         self.next_id += 1;
@@ -879,6 +888,20 @@ impl AcpClient {
     /// publish a kind 44200 NIP-AM event.
     pub fn take_turn_usage(&mut self) -> Option<TurnUsage> {
         self.goose_usage.take()
+    }
+
+    /// Consume the streamed agent text accumulated during the current turn.
+    ///
+    /// Returns trimmed non-empty text at most once per turn. Used by the
+    /// pool's final-message delivery fallback after a genuine `EndTurn`.
+    pub fn take_turn_transcript(&mut self) -> Option<String> {
+        self.turn_capture.take_transcript()
+    }
+
+    /// Whether the agent attempted a relay message send this turn that is
+    /// not known to have failed (see [`TurnCapture::sent_relay_message`]).
+    pub fn sent_relay_message_this_turn(&self) -> bool {
+        self.turn_capture.sent_relay_message()
     }
 
     /// Install a per-turn steer request channel for goose-native
@@ -1733,6 +1756,7 @@ impl AcpClient {
             "agent_message_chunk" => {
                 if let Some(text) = update["content"]["text"].as_str() {
                     tracing::info!(target: "acp::stream", "{text}");
+                    self.turn_capture.append_chunk(text);
                 }
                 false
             }
@@ -1746,6 +1770,11 @@ impl AcpClient {
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
                 tracing::info!(target: "acp::tool", "tool_call: {title} ({kind})");
+                self.turn_capture.note_tool_call(
+                    title,
+                    update.get("rawInput"),
+                    update.get("toolCallId").and_then(|v| v.as_str()),
+                );
                 true
             }
             "tool_call_update" => {
@@ -1755,6 +1784,7 @@ impl AcpClient {
                     .unwrap_or("?");
                 let status = update.get("status").and_then(|v| v.as_str()).unwrap_or("?");
                 tracing::info!(target: "acp::tool", "tool_call_update: {tool_id} → {status}");
+                self.turn_capture.note_tool_call_update(tool_id, status);
                 false
             }
             "plan" => {

@@ -1,6 +1,7 @@
 #![deny(unsafe_code)]
 
 mod acp;
+mod capture;
 mod config;
 mod engram_fetch;
 mod filter;
@@ -1843,6 +1844,7 @@ async fn tokio_main() -> Result<()> {
         memory_enabled: config.memory_enabled,
         harness_name: crate::config::normalize_agent_command_identity(&config.agent_command),
         relay_url: config.relay_url.clone(),
+        deliver_final: config.deliver_final,
     });
 
     if !config.memory_enabled {
@@ -6186,6 +6188,7 @@ mod build_mcp_servers_tests {
             initial_message: None,
             subscribe_mode: config::SubscribeMode::All,
             dedup_mode: config::DedupMode::Queue,
+            deliver_final: config::DeliverFinal::Auto,
             multiple_event_handling: config::MultipleEventHandling::Queue,
             ignore_self: true,
             kinds_override: None,
@@ -6408,6 +6411,7 @@ mod error_outcome_emission_tests {
             initial_message: None,
             subscribe_mode: config::SubscribeMode::All,
             dedup_mode: config::DedupMode::Queue,
+            deliver_final: config::DeliverFinal::Auto,
             multiple_event_handling: config::MultipleEventHandling::Queue,
             ignore_self: true,
             kinds_override: None,

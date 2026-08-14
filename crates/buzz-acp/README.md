@@ -129,6 +129,27 @@ All configuration is via environment variables (or CLI flags — every env var h
 | `--heartbeat-prompt` | `BUZZ_ACP_HEARTBEAT_PROMPT` | (built-in) | Custom heartbeat prompt text. Conflicts with `--heartbeat-prompt-file`. |
 | `--heartbeat-prompt-file` | `BUZZ_ACP_HEARTBEAT_PROMPT_FILE` | — | Read heartbeat prompt from a file. Conflicts with `--heartbeat-prompt`. |
 
+### Reply Delivery
+
+The agent's canonical reply path is calling the message-send tool itself
+(`buzz messages send` via the MCP shell). As a safety net, the harness also
+accumulates the agent's streamed `agent_message_chunk` text per turn (capped
+at 64 KiB) and, when a turn ends **without** the agent having attempted a
+message send, publishes that text as a threaded reply to the triggering event
+— same channel, NIP-10 threading, trigger author p-tagged.
+
+The fallback fires for `end_turn` and for the two truncating stop reasons,
+`max_tokens` and `max_turn_requests`. A truncated turn has its session rotated
+immediately afterwards, so its partial answer would otherwise be lost with no
+retry — silence is the worse outcome. Cancelled turns are excluded (the agent
+resumes on the next prompt and would double-post), as are refusals, timeouts,
+and heartbeat turns. Any attempted send (even one whose outcome is unknown)
+suppresses the fallback, so the agent can never double-post.
+
+| Flag | Env Var | Default | Description |
+|------|---------|---------|-------------|
+| `--deliver-final` | `BUZZ_ACP_DELIVER_FINAL` | `auto` | `auto` publishes streamed final text as the reply when the agent didn't send one itself; `off` restores tool-call-only delivery. |
+
 ### Inbound Author Gate
 
 Controls which authors' events the harness forwards to the agent. Events from disallowed authors are silently dropped before reaching subscription rules.

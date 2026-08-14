@@ -34,7 +34,7 @@ use crate::acp::{
     resolve_model_switch_method, AcpClient, AcpError, EnvVar, McpServer, ModelSwitchMethod,
     StopReason, SystemPromptTransport,
 };
-use crate::config::{compose_session_title, DedupMode, PermissionMode};
+use crate::config::{compose_session_title, DedupMode, DeliverFinal, PermissionMode};
 use crate::observer;
 use crate::queue::{
     CancelReason, ContextMessage, ConversationContext, FlushBatch, PromptChannelInfo,
@@ -564,6 +564,9 @@ pub struct PromptContext {
     /// the desktop keys per (agent, relay) pair, e.g. `session_config_captured`,
     /// mirroring the `managed_agent_runtime_lifecycle` frames.
     pub relay_url: String,
+    /// Whether to publish the agent's streamed final text as the channel
+    /// reply when a turn ends without the agent having sent a message itself.
+    pub deliver_final: DeliverFinal,
 }
 
 impl AgentPool {
@@ -2110,6 +2113,15 @@ pub async fn run_prompt_task(
                             &source,
                             &control_signal,
                         );
+                        let transcript = agent.acp.take_turn_transcript();
+                        let sent_already = agent.acp.sent_relay_message_this_turn();
+                        deliver_final_message_fallback(
+                            &ctx,
+                            batch.as_ref(),
+                            transcript,
+                            sent_already,
+                        )
+                        .await;
                         let usage = agent.acp.take_turn_usage();
                         publish_agent_turn_metric(
                             &ctx,
@@ -2169,6 +2181,19 @@ pub async fn run_prompt_task(
                     "rotating session for {source:?} after {stop_reason:?}",
                 );
                 agent.state.invalidate(&source);
+            }
+
+            // A turn cut off by a token/request ceiling is exactly the case
+            // where the partial answer is most worth rescuing: the session is
+            // rotated immediately above, so whatever the agent had streamed is
+            // otherwise lost with no retry. Cancelled turns are excluded — the
+            // agent resumes on the next prompt and would double-post — and so
+            // are refusals, which carry no answer to deliver.
+            if should_deliver_fallback(&stop_reason) {
+                let transcript = agent.acp.take_turn_transcript();
+                let sent_already = agent.acp.sent_relay_message_this_turn();
+                deliver_final_message_fallback(&ctx, batch.as_ref(), transcript, sent_already)
+                    .await;
             }
 
             let core_stop = acp_stop_to_core(&stop_reason);
@@ -3803,6 +3828,133 @@ async fn publish_agent_turn_metric(
             session_id,
             turn_id,
             "NIP-AM: publish timed out"
+        ),
+    }
+}
+
+/// Kinds whose fallback reply is a forum comment (kind 45003) rather than a
+/// stream message (kind 9): forum posts and forum comments.
+const FORUM_TRIGGER_KINDS: [u16; 2] = [45001, 45003];
+
+/// Extract the thread root event ID from a trigger event's NIP-10 `e` tags.
+///
+/// Same semantics as `find_root_from_tags` in `buzz-cli`: a `root` marker
+/// wins; else a `reply` marker's target is the root (a direct reply's parent
+/// IS the root); else the trigger itself is a top-level message and is the
+/// root. Malformed markers are ignored so a bad tag can't block the reply.
+fn find_root_from_trigger(trigger: &nostr::Event) -> nostr::EventId {
+    fn parse_id(s: &str) -> Option<nostr::EventId> {
+        (s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()))
+            .then(|| nostr::EventId::from_hex(s).ok())
+            .flatten()
+    }
+    let mut root = None;
+    let mut reply = None;
+    for tag in trigger.tags.iter() {
+        let parts = tag.as_slice();
+        if parts.len() >= 4 && parts[0] == "e" {
+            match (parts[3].as_str(), parse_id(&parts[1])) {
+                ("root", Some(id)) => root = Some(id),
+                ("reply", Some(id)) => reply = Some(id),
+                _ => {}
+            }
+        }
+    }
+    root.or(reply).unwrap_or(trigger.id)
+}
+
+/// Build the fallback reply event for a turn whose agent streamed text but
+/// never sent a message: a threaded reply to `trigger` in `channel_id`,
+/// signed by the agent. Kind mirrors the trigger — forum kinds get a forum
+/// comment (45003), everything else a stream message (kind 9). The trigger
+/// author is p-tagged so they are notified of the reply.
+fn build_fallback_reply(
+    trigger: &nostr::Event,
+    channel_id: Uuid,
+    text: &str,
+    keys: &nostr::Keys,
+) -> Result<nostr::Event, String> {
+    let thread_ref = buzz_sdk::ThreadRef {
+        root_event_id: find_root_from_trigger(trigger),
+        parent_event_id: trigger.id,
+    };
+    let author_hex = trigger.pubkey.to_hex();
+    let mentions = [author_hex.as_str()];
+    let builder = if FORUM_TRIGGER_KINDS.contains(&trigger.kind.as_u16()) {
+        buzz_sdk::build_forum_comment(channel_id, text, &thread_ref, &mentions, &[])
+    } else {
+        buzz_sdk::build_message(channel_id, text, Some(&thread_ref), &mentions, false, &[])
+    }
+    .map_err(|e| format!("build: {e}"))?;
+    builder
+        .sign_with_keys(keys)
+        .map_err(|e| format!("sign: {e}"))
+}
+
+/// Whether a turn that returned `stop_reason` should have its streamed text
+/// published as the fallback reply.
+///
+/// `EndTurn` is the normal case. `MaxTokens` / `MaxTurnRequests` are included
+/// because such a turn is truncated and its session is rotated immediately
+/// afterwards (see `run_prompt_task`), so an un-delivered partial answer is
+/// lost outright with no retry — silence is the worse outcome. `Cancelled` is
+/// excluded: the agent continues on the next prompt and would double-post.
+/// `Refusal` is excluded: refused turns are dropped from agent history and
+/// carry no answer worth delivering.
+fn should_deliver_fallback(stop_reason: &StopReason) -> bool {
+    matches!(
+        stop_reason,
+        StopReason::EndTurn | StopReason::MaxTokens | StopReason::MaxTurnRequests
+    )
+}
+
+/// Best-effort: publish the agent's streamed final text as the channel reply
+/// when a turn produced no relay message send.
+///
+/// Called from the completion paths of `run_prompt_task` gated by
+/// [`should_deliver_fallback`] — never on cancellation, refusal, timeout, or
+/// heartbeat turns. Errors are logged at WARN and never surface to the caller.
+async fn deliver_final_message_fallback(
+    ctx: &PromptContext,
+    batch: Option<&FlushBatch>,
+    transcript: Option<String>,
+    sent_already: bool,
+) {
+    if ctx.deliver_final == DeliverFinal::Off || sent_already {
+        return;
+    }
+    let Some(batch) = batch else {
+        return; // heartbeat turn — nothing to reply to
+    };
+    let Some(text) = transcript else {
+        return; // agent streamed nothing (or only whitespace)
+    };
+    let Some(trigger) = batch.events.last().map(|be| &be.event) else {
+        return;
+    };
+    let event = match build_fallback_reply(trigger, batch.channel_id, &text, &ctx.agent_keys) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!(target: "pool::deliver", "fallback reply build failed: {e}");
+            return;
+        }
+    };
+    const DELIVER_TIMEOUT: Duration = Duration::from_secs(3);
+    match timeout(DELIVER_TIMEOUT, ctx.rest_client.submit_event(&event)).await {
+        Ok(Ok(_)) => tracing::info!(
+            target: "pool::deliver",
+            "published fallback reply {} in channel {} ({} bytes)",
+            event.id.to_hex(),
+            batch.channel_id,
+            text.len()
+        ),
+        Ok(Err(e)) => tracing::warn!(
+            target: "pool::deliver",
+            "fallback reply publish failed: {e}"
+        ),
+        Err(_) => tracing::warn!(
+            target: "pool::deliver",
+            "fallback reply publish timed out"
         ),
     }
 }
@@ -6542,7 +6694,124 @@ mod tests {
             memory_enabled: false,
             harness_name: "goose".to_string(),
             relay_url: "ws://127.0.0.1:3000".to_string(),
+            deliver_final: DeliverFinal::Auto,
         }
+    }
+
+    // ── deliver_final fallback reply ─────────────────────────────────────────
+
+    fn make_trigger(kind: u16, tags: Vec<Vec<&str>>) -> nostr::Event {
+        let keys = nostr::Keys::generate();
+        nostr::EventBuilder::new(nostr::Kind::Custom(kind), "trigger")
+            .tags(tags.into_iter().map(|t| nostr::Tag::parse(t).expect("tag")))
+            .sign_with_keys(&keys)
+            .expect("sign")
+    }
+
+    fn tag_slices(event: &nostr::Event) -> Vec<Vec<String>> {
+        event.tags.iter().map(|t| t.as_slice().to_vec()).collect()
+    }
+
+    #[test]
+    fn fallback_reply_direct_reply_threads_to_trigger() {
+        let channel = Uuid::new_v4();
+        let trigger = make_trigger(9, vec![vec!["h", &channel.to_string()]]);
+        let keys = nostr::Keys::generate();
+        let reply = build_fallback_reply(&trigger, channel, "answer", &keys).expect("reply");
+
+        assert_eq!(reply.kind.as_u16(), 9);
+        assert_eq!(reply.content, "answer");
+        let tags = tag_slices(&reply);
+        assert!(tags
+            .iter()
+            .any(|t| t[0] == "h" && t[1] == channel.to_string()));
+        // Direct reply: root == parent == trigger. The builder emits the
+        // NIP-10 e tags for that shape.
+        let e_tags: Vec<_> = tags.iter().filter(|t| t[0] == "e").collect();
+        assert!(!e_tags.is_empty());
+        assert!(e_tags.iter().all(|t| t[1] == trigger.id.to_hex()));
+        // Trigger author is p-tagged for notification.
+        assert!(tags
+            .iter()
+            .any(|t| t[0] == "p" && t[1] == trigger.pubkey.to_hex()));
+    }
+
+    #[test]
+    fn fallback_reply_nested_uses_trigger_root_marker() {
+        let channel = Uuid::new_v4();
+        let root_id = "a".repeat(64);
+        let trigger = make_trigger(
+            9,
+            vec![
+                vec!["h", &channel.to_string()],
+                vec!["e", &root_id, "", "root"],
+            ],
+        );
+        let keys = nostr::Keys::generate();
+        let reply = build_fallback_reply(&trigger, channel, "answer", &keys).expect("reply");
+        let tags = tag_slices(&reply);
+        let root_tag = tags
+            .iter()
+            .find(|t| t[0] == "e" && t.len() >= 4 && t[3] == "root")
+            .expect("root e tag");
+        assert_eq!(root_tag[1], root_id);
+        let reply_tag = tags
+            .iter()
+            .find(|t| t[0] == "e" && t.len() >= 4 && t[3] == "reply")
+            .expect("reply e tag");
+        assert_eq!(reply_tag[1], trigger.id.to_hex());
+    }
+
+    #[test]
+    fn fallback_reply_reply_marker_promotes_to_root() {
+        // Trigger has only a reply marker: that target IS the root.
+        let channel = Uuid::new_v4();
+        let parent_of_trigger = "b".repeat(64);
+        let trigger = make_trigger(
+            9,
+            vec![
+                vec!["h", &channel.to_string()],
+                vec!["e", &parent_of_trigger, "", "reply"],
+            ],
+        );
+        assert_eq!(find_root_from_trigger(&trigger).to_hex(), parent_of_trigger);
+    }
+
+    #[test]
+    fn fallback_reply_malformed_marker_falls_back_to_trigger_as_root() {
+        let channel = Uuid::new_v4();
+        let trigger = make_trigger(
+            9,
+            vec![
+                vec!["h", &channel.to_string()],
+                vec!["e", "not-hex", "", "root"],
+            ],
+        );
+        assert_eq!(find_root_from_trigger(&trigger), trigger.id);
+    }
+
+    #[test]
+    fn fallback_reply_forum_trigger_builds_forum_comment() {
+        let channel = Uuid::new_v4();
+        for kind in FORUM_TRIGGER_KINDS {
+            let trigger = make_trigger(kind, vec![vec!["h", &channel.to_string()]]);
+            let keys = nostr::Keys::generate();
+            let reply = build_fallback_reply(&trigger, channel, "answer", &keys).expect("reply");
+            assert_eq!(reply.kind.as_u16(), 45003, "trigger kind {kind}");
+        }
+    }
+
+    #[test]
+    fn fallback_delivers_on_completed_and_truncated_turns_only() {
+        // Truncated turns are rotated away immediately, so their partial text
+        // must still reach the channel.
+        assert!(should_deliver_fallback(&StopReason::EndTurn));
+        assert!(should_deliver_fallback(&StopReason::MaxTokens));
+        assert!(should_deliver_fallback(&StopReason::MaxTurnRequests));
+        // Cancelled would double-post once the agent resumes; a refusal has
+        // nothing to deliver.
+        assert!(!should_deliver_fallback(&StopReason::Cancelled));
+        assert!(!should_deliver_fallback(&StopReason::Refusal));
     }
 
     // ── render_canvas_section ────────────────────────────────────────────────
