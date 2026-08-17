@@ -28,20 +28,30 @@ last_detail() { # last_detail <jsonl> <field>
 build_check_exit=0
 "${STATE_DIR}/agent-build-check.sh" >/dev/null 2>&1 || build_check_exit=$?
 
+promote_outcome="off"
 promote_line="ikke kjort (promotering er av)"
 if [[ -e "${PROMOTE_SWITCH}" ]]; then
   "${STATE_DIR}/agent-promote.sh" >/dev/null 2>&1 || true
-  promote_line="$(last_detail "${PROMOTE_LOG}" outcome): $(last_detail "${PROMOTE_LOG}" detail)"
+  promote_outcome="$(last_detail "${PROMOTE_LOG}" outcome)"
+  promote_line="${promote_outcome}: $(last_detail "${PROMOTE_LOG}" detail)"
 fi
 
 build_status="$(cat "${BUILD_STATUS}" 2>/dev/null || echo 'ingen status')"
 build_outcome="$(awk '{print $2}' <<<"${build_status}")"
-relay_line="$(last_detail "${RELAY_LOG}" outcome): $(last_detail "${RELAY_LOG}" detail)"
+# Stamped, because the relay job runs on its own timer: without the timestamp a
+# months-old line reads as tonight's result. A rollback drill from this morning
+# looked exactly like an overnight failure the first time this report ran.
+relay_line="$(last_detail "${RELAY_LOG}" ts) $(last_detail "${RELAY_LOG}" outcome): $(last_detail "${RELAY_LOG}" detail)"
 
-case "${build_outcome}" in
-  green|noop) headline="Nattlig autoupdate: **gronn**." ;;
-  *)          headline="@John Inge Nattlig autoupdate: **${build_outcome:-ukjent}** — se detaljene under." ;;
-esac
+bad=""
+case "${build_outcome}" in green|noop) ;; *) bad="bygg=${build_outcome:-ukjent}" ;; esac
+case "${promote_outcome}" in off|promoted) ;; *) bad="${bad:+${bad} }promote=${promote_outcome}" ;; esac
+
+if [[ -z "${bad}" ]]; then
+  headline="Nattlig autoupdate: **gronn**."
+else
+  headline="@John Inge Nattlig autoupdate: **${bad}** — se detaljene under."
+fi
 
 body="$(
   printf '%s\n\n' "${headline}"
@@ -50,15 +60,16 @@ body="$(
   printf 'promote      %s\n' "${promote_line}"
   printf 'relay        %s\n' "${relay_line}"
   printf '```\n'
-  if [[ "${build_outcome}" != "green" && "${build_outcome}" != "noop" ]]; then
-    printf '\nLogger paa VM-en: `%s/build-*.log`, `%s/smoke-*.log`.\n' "${STATE_DIR}" "${STATE_DIR}"
+  if [[ -n "${bad}" ]]; then
+    printf '\nLogger paa VM-en: `%s/build-*.log`, `%s/smoke-*.log`, `%s/agent-promote.jsonl`.\n' \
+      "${STATE_DIR}" "${STATE_DIR}" "${STATE_DIR}"
   fi
 )"
 
 # A red night must reach a human, so mention the owner only when it is red --
 # a nightly green that pings him every morning trains him to ignore the ping.
 mention=()
-[[ "${build_outcome}" != "green" && "${build_outcome}" != "noop" ]] && mention=(--mention "${OWNER_PUBKEY}")
+[[ -n "${bad}" ]] && mention=(--mention "${OWNER_PUBKEY}")
 
 printf '%s' "${body}" | docker exec -i "${REPORT_CONTAINER}" \
   buzz messages send --channel "${REPORT_CHANNEL}" --content - "${mention[@]}" \
