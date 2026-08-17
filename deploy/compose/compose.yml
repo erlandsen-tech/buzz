@@ -2,13 +2,23 @@ name: buzz-prod
 
 services:
   relay:
-    image: ${BUZZ_IMAGE:-ghcr.io/block/buzz:main}
-    env_file:
-      - .env
+    image: ${BUZZ_IMAGE:-ghcr.io/block/buzz:main@sha256:5290a17c172e8dcc67afe58450a2d5adef27f739d925a4afcbffbe9433345889}
     environment:
       BUZZ_BIND_ADDR: 0.0.0.0:3000
       BUZZ_HEALTH_PORT: "8080"
       BUZZ_METRICS_PORT: "9102"
+      BUZZ_DOMAIN: ${BUZZ_DOMAIN:?set BUZZ_DOMAIN}
+      RELAY_URL: ${RELAY_URL:?set RELAY_URL}
+      BUZZ_MEDIA_BASE_URL: ${BUZZ_MEDIA_BASE_URL:?set BUZZ_MEDIA_BASE_URL}
+      BUZZ_MEDIA_SERVER_DOMAIN: ${BUZZ_MEDIA_SERVER_DOMAIN:?set BUZZ_MEDIA_SERVER_DOMAIN}
+      BUZZ_CORS_ORIGINS: ${BUZZ_CORS_ORIGINS:?set BUZZ_CORS_ORIGINS}
+      BUZZ_REQUIRE_AUTH_TOKEN: ${BUZZ_REQUIRE_AUTH_TOKEN:-true}
+      BUZZ_REQUIRE_RELAY_MEMBERSHIP: ${BUZZ_REQUIRE_RELAY_MEMBERSHIP:-true}
+      BUZZ_ALLOW_NIP_OA_AUTH: ${BUZZ_ALLOW_NIP_OA_AUTH:-true}
+      RELAY_OWNER_PUBKEY: ${RELAY_OWNER_PUBKEY:?set RELAY_OWNER_PUBKEY}
+      BUZZ_RELAY_PRIVATE_KEY: ${BUZZ_RELAY_PRIVATE_KEY:?set BUZZ_RELAY_PRIVATE_KEY}
+      BUZZ_GIT_HOOK_HMAC_SECRET: ${BUZZ_GIT_HOOK_HMAC_SECRET:?set BUZZ_GIT_HOOK_HMAC_SECRET}
+      RUST_LOG: ${RUST_LOG:-buzz_relay=info,buzz_db=info,buzz_auth=info,buzz_pubsub=info,tower_http=info}
       DATABASE_URL: postgres://${POSTGRES_USER:-buzz}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-buzz}
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379
       BUZZ_S3_ENDPOINT: http://minio:9000
@@ -49,7 +59,7 @@ services:
       - buzz-net
 
   postgres:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-buzz}
       POSTGRES_USER: ${POSTGRES_USER:-buzz}
@@ -68,7 +78,7 @@ services:
       - buzz-net
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD}"]
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
@@ -85,7 +95,7 @@ services:
       - buzz-net
 
   minio:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${BUZZ_S3_ACCESS_KEY:?set BUZZ_S3_ACCESS_KEY}
@@ -103,7 +113,7 @@ services:
       - buzz-net
 
   minio-init:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
     depends_on:
       minio:
         condition: service_healthy
