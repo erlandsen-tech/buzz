@@ -145,8 +145,15 @@ for seat in "${SEATS[@]}"; do
 done
 
 CUTOVER="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+log_json cutover "retagged 7 seat images to candidate-${SHORT}; recreating"
+
+# `compose up` exits non-zero when a container it started has already died, and
+# a broken image does exactly that. Under `set -e` an unguarded call here aborts
+# the script *before* the gate and the rollback -- which is how a drill with a
+# deliberately broken image left all seven seats down instead of restoring them.
+# A failed `up` is an expected input to the gate below, not a reason to stop.
 compose up -d --no-build goose-agent goose-crash goose-ed209 goose-mcp \
-  goose-swordfish hermes-nikon pi-agent
+  goose-swordfish hermes-nikon pi-agent || true
 
 if wait_for_fleet "${CUTOVER}"; then
   log_json promoted "all 7 seats report agent_pool_ready on candidate-${SHORT}"
