@@ -1,0 +1,21 @@
+# NIP-AB pairing sidecar. The main relay is closed
+# (BUZZ_REQUIRE_RELAY_MEMBERSHIP=true), so the ephemeral session key that signs
+# kind:24134 cannot pass NIP-42 AUTH there. buzz-pair-relay is the upstream
+# answer: no auth, no persistence, fan-out only. Not published; only Caddy
+# reaches it, via the /pair* route.
+services:
+  relay:
+    environment:
+      BUZZ_PAIRING_RELAY_URL: ${BUZZ_PAIRING_RELAY_URL:-}
+
+  pair-relay:
+    image: ${BUZZ_IMAGE:-ghcr.io/block/buzz:main@sha256:5290a17c172e8dcc67afe58450a2d5adef27f739d925a4afcbffbe9433345889}
+    # The image ENTRYPOINT is buzz-relay, so override it rather than passing
+    # command: args, which would land as flags on the wrong binary.
+    entrypoint: ["/usr/local/bin/buzz-pair-relay"]
+    environment:
+      BUZZ_PAIR_RELAY_BIND_ADDR: 0.0.0.0:5000
+      RUST_LOG: ${RUST_LOG:-buzz_pair_relay=info}
+    restart: unless-stopped
+    networks:
+      - buzz-net

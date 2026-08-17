@@ -1,0 +1,5 @@
+# Seed config for the Lord Nikon crew agent. Copied into HERMES_HOME on first
+# boot only; edit the volume copy for live changes.
+model:
+  default: "openai/gpt-5.6-terra"
+  provider: "openrouter"

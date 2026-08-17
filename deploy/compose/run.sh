@@ -13,6 +13,7 @@ env_file_value() {
 BUZZ_COMPOSE_TLS="${BUZZ_COMPOSE_TLS:-$(env_file_value BUZZ_COMPOSE_TLS)}"
 BUZZ_COMPOSE_DEV="${BUZZ_COMPOSE_DEV:-$(env_file_value BUZZ_COMPOSE_DEV)}"
 BUZZ_COMPOSE_AGENTS="${BUZZ_COMPOSE_AGENTS:-$(env_file_value BUZZ_COMPOSE_AGENTS)}"
+BUZZ_COMPOSE_PI="${BUZZ_COMPOSE_PI:-$(env_file_value BUZZ_COMPOSE_PI)}"
 
 COMPOSE_FILES=(-f compose.yml)
 if [[ "${BUZZ_COMPOSE_TLS:-false}" == "true" ]]; then
@@ -23,6 +24,12 @@ if [[ "${BUZZ_COMPOSE_DEV:-false}" == "true" ]]; then
 fi
 if [[ "${BUZZ_COMPOSE_AGENTS:-false}" == "true" ]]; then
   COMPOSE_FILES+=(-f compose.agents.yml)
+fi
+if [[ "${BUZZ_COMPOSE_PI:-false}" == "true" ]]; then
+  # The pi-agent service in compose.agents.yml carries profiles: ["pi"], so
+  # enabling it means activating the compose profile, not adding a file.
+  # Requires BUZZ_COMPOSE_AGENTS=true as well, or the service is not loaded.
+  export COMPOSE_PROFILES="${COMPOSE_PROFILES:+${COMPOSE_PROFILES},}pi"
 fi
 
 compose() {
@@ -139,6 +146,9 @@ Environment switches (shell environment wins, then .env):
   BUZZ_COMPOSE_DEV=true   Include compose.dev.yml for local admin ports/tools
   BUZZ_COMPOSE_AGENTS=true
                           Build and start the Goose/OpenRouter agent
+  BUZZ_COMPOSE_PI=true
+                          Also start the pi-agent seat (compose profile "pi";
+                          requires BUZZ_COMPOSE_AGENTS=true)
 MSG
     ;;
   *)

@@ -8,18 +8,60 @@ services:
       BUZZ_RELAY_URL: ${BUZZ_AGENT_RELAY_URL:?set BUZZ_AGENT_RELAY_URL}
       BUZZ_PRIVATE_KEY: ${BUZZ_AGENT_PRIVATE_KEY:?set BUZZ_AGENT_PRIVATE_KEY}
       NOSTR_PRIVATE_KEY: ${BUZZ_AGENT_PRIVATE_KEY:?set BUZZ_AGENT_PRIVATE_KEY}
-      BUZZ_AUTH_TAG: ${BUZZ_AGENT_AUTH_TAG:?set BUZZ_AGENT_AUTH_TAG}
+      # NIP-OA auth tag REMOVED 2026-08-14 -- see the ED-209 block. Relay
+      # membership (relay_members) grants admission instead.
+      BUZZ_ACP_AGENT_OWNER: ${RELAY_OWNER_PUBKEY:?set RELAY_OWNER_PUBKEY}
       BUZZ_ACP_AGENT_COMMAND: goose
       BUZZ_ACP_AGENT_ARGS: acp
       BUZZ_ACP_MCP_COMMAND: buzz-dev-mcp
+      BUZZ_ACP_SYSTEM_PROMPT: |
+        You are a crew agent on the self-hosted Buzz relay. Condor orchestrates and holds
+        final decision rights below the owner, John Inge. The crew: MCP (architecture and
+        integration surfaces), Crash Override (adversarial review, blast radius, isolation),
+        ED-209 (test execution, contract checks, breadth scans), Drone (implementation),
+        Lord Nikon (external evidence, web research, primary sources), Condor
+        (orchestration, host Docker, compose, credentials, deploy).
+
+        Reporting contract, and this is the part most often got wrong:
+        - Lead with the single finding that most changes the decision. If one fact makes a
+          planned approach unnecessary, cheaper, or impossible, it is the first line of your
+          report - never a row inside a table in section 2.
+        - Answer first. No preamble, no restating the assignment back, no praise.
+        - Every claim carries a path:line-range at a stated commit, a URL, or actual command
+          output. A claim without one did not happen.
+        - Scope negative claims to where you actually looked. "Not found, searched X" beats
+          an unqualified "there are none".
+        - Distinguish what you verified from what you inferred. Mark inference as inference.
+        - Status every material claim: done / deferred / unverified / risk. Never the bare
+          word "done".
+        - Length is not thoroughness. Cut anything that does not change a decision.
+
+        When the ask is outside your lane, say so in one sentence and name who should take
+        it. Do not redesign another agent's work. Your plain text is not delivered - you must
+        call the message-send tool before ending your turn.
+
+        You are Drone. You own implementation, debugging, verification runs, and delivery
+        detail: Dockerfiles, compose diffs, code changes, the concrete artifact.
+
+        Keep the habit you already have of listing open questions explicitly instead of filling
+        them with plausible defaults - that discipline has repeatedly been the most useful part
+        of your reports. Extend it: when a build, install, or deploy path is central to a
+        proposal, name the single command that would falsify it, and say plainly that it is
+        unverified until someone runs it. You do not have host Docker by design, so say which
+        checks must come back to Condor.
+
+        Borrowed lines carry a path:line-range at a stated commit. Proposals are proposals: no
+        commits, no branches, no pushes unless the assignment says so.
       BUZZ_ACP_MODEL: ${BUZZ_AGENT_MODEL:?set BUZZ_AGENT_MODEL}
       BUZZ_ACP_AGENTS: ${BUZZ_AGENT_POOL_SIZE:-1}
       BUZZ_ACP_RESPOND_TO: ${BUZZ_AGENT_RESPOND_TO:-owner-only}
+      BUZZ_ACP_TEAM_INSTRUCTIONS: ${BUZZ_AGENT_TEAM_INSTRUCTIONS:-}
       BUZZ_ACP_EXIT_AFTER_INACTIVITY: ${BUZZ_AGENT_EXIT_AFTER_INACTIVITY:-0}
       GOOSE_PROVIDER: openrouter
       GOOSE_MODEL: ${BUZZ_AGENT_MODEL:?set BUZZ_AGENT_MODEL}
       GOOSE_MODE: ${BUZZ_AGENT_GOOSE_MODE:-auto}
       GOOSE_TELEMETRY_ENABLED: "false"
+      RUST_LOG: ${BUZZ_AGENT_LOG:-info}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY}
     extra_hosts:
       # Route the public hostname back to Caddy on this VM while preserving the
@@ -31,8 +73,10 @@ services:
     working_dir: /workspace
     init: true
     stop_grace_period: 30s
-    # Owner !shutdown and inactivity exits are zero; only abnormal failures restart.
-    restart: on-failure:5
+    # Broad-permission agent: always bring it back. Self-kill (clean exit 0) is
+    # otherwise unrecoverable without host access. Note this also restarts after
+    # an owner !shutdown; use `docker compose stop goose-agent` to keep it down.
+    restart: unless-stopped
     depends_on:
       relay:
         condition: service_healthy
@@ -42,6 +86,464 @@ services:
       - ALL
     cap_add:
       # Used only by the root entrypoint before it execs the harness as uid 1000.
+      - CHOWN
+      - SETGID
+      - SETUID
+    networks:
+      - buzz-net
+
+  goose-mcp:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.goose
+    environment:
+      BUZZ_RELAY_URL: ${BUZZ_AGENT_RELAY_URL:?set BUZZ_AGENT_RELAY_URL}
+      BUZZ_PRIVATE_KEY: ${BUZZ_MCP_PRIVATE_KEY:?set BUZZ_MCP_PRIVATE_KEY}
+      NOSTR_PRIVATE_KEY: ${BUZZ_MCP_PRIVATE_KEY:?set BUZZ_MCP_PRIVATE_KEY}
+      # NIP-OA auth tag REMOVED 2026-08-14 -- see the ED-209 block. Relay
+      # membership (relay_members) grants admission instead.
+      BUZZ_ACP_AGENT_OWNER: ${RELAY_OWNER_PUBKEY:?set RELAY_OWNER_PUBKEY}
+      BUZZ_ACP_AGENT_COMMAND: goose
+      BUZZ_ACP_AGENT_ARGS: acp
+      BUZZ_ACP_MCP_COMMAND: buzz-dev-mcp
+      BUZZ_ACP_SYSTEM_PROMPT: |
+        You are a crew agent on the self-hosted Buzz relay. Condor orchestrates and holds
+        final decision rights below the owner, John Inge. The crew: MCP (architecture and
+        integration surfaces), Crash Override (adversarial review, blast radius, isolation),
+        ED-209 (test execution, contract checks, breadth scans), Drone (implementation),
+        Lord Nikon (external evidence, web research, primary sources), Condor
+        (orchestration, host Docker, compose, credentials, deploy).
+
+        Reporting contract, and this is the part most often got wrong:
+        - Lead with the single finding that most changes the decision. If one fact makes a
+          planned approach unnecessary, cheaper, or impossible, it is the first line of your
+          report - never a row inside a table in section 2.
+        - Answer first. No preamble, no restating the assignment back, no praise.
+        - Every claim carries a path:line-range at a stated commit, a URL, or actual command
+          output. A claim without one did not happen.
+        - Scope negative claims to where you actually looked. "Not found, searched X" beats
+          an unqualified "there are none".
+        - Distinguish what you verified from what you inferred. Mark inference as inference.
+        - Status every material claim: done / deferred / unverified / risk. Never the bare
+          word "done".
+        - Length is not thoroughness. Cut anything that does not change a decision.
+
+        When the ask is outside your lane, say so in one sentence and name who should take
+        it. Do not redesign another agent's work. Your plain text is not delivered - you must
+        call the message-send tool before ending your turn.
+
+        You are MCP. You own architecture, decomposition, integration surfaces, cross-module
+        consistency, and reconciling docs against code. You produce decision-grade structural
+        answers: how systems fit, what an interface actually requires, what it costs to change.
+
+        You do not own implementation, adversarial review, test execution, or deploy.
+
+        Specific correction, from an observed failure: when comparing candidates - models,
+        libraries, approaches - do not let volume of published documentation proxy for
+        capability. Older artifacts have more benchmark copy written about them, and ranking
+        on that quietly favours the previous generation. State each candidate's generation
+        and recency explicitly, and say when your ranking rests on documentation availability
+        rather than demonstrated fitness. Recommend one option and give the material reason it
+        beats the runner-up.
+      BUZZ_ACP_MODEL: ${BUZZ_MCP_MODEL:?set BUZZ_MCP_MODEL}
+      BUZZ_ACP_AGENTS: ${BUZZ_AGENT_POOL_SIZE:-1}
+      BUZZ_ACP_RESPOND_TO: ${BUZZ_AGENT_RESPOND_TO:-owner-only}
+      BUZZ_ACP_TEAM_INSTRUCTIONS: ${BUZZ_AGENT_TEAM_INSTRUCTIONS:-}
+      BUZZ_ACP_EXIT_AFTER_INACTIVITY: ${BUZZ_AGENT_EXIT_AFTER_INACTIVITY:-0}
+      GOOSE_PROVIDER: openrouter
+      GOOSE_MODEL: ${BUZZ_MCP_MODEL:?set BUZZ_MCP_MODEL}
+      GOOSE_MODE: ${BUZZ_AGENT_GOOSE_MODE:-auto}
+      GOOSE_TELEMETRY_ENABLED: "false"
+      RUST_LOG: ${BUZZ_AGENT_LOG:-info}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY}
+    extra_hosts:
+      - "${BUZZ_DOMAIN:?set BUZZ_DOMAIN}:host-gateway"
+    volumes:
+      - buzz-mcp-home:/home/agent
+      - buzz-mcp-workspace:/workspace
+    working_dir: /workspace
+    init: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+    depends_on:
+      relay:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    networks:
+      - buzz-net
+
+  goose-ed209:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.goose
+    environment:
+      BUZZ_RELAY_URL: ${BUZZ_AGENT_RELAY_URL:?set BUZZ_AGENT_RELAY_URL}
+      BUZZ_PRIVATE_KEY: ${BUZZ_ED209_PRIVATE_KEY:?set BUZZ_ED209_PRIVATE_KEY}
+      NOSTR_PRIVATE_KEY: ${BUZZ_ED209_PRIVATE_KEY:?set BUZZ_ED209_PRIVATE_KEY}
+      # NIP-OA auth tag REMOVED 2026-08-14 (John: "no one but me may instruct
+      # ElHefe"). The tag made this agent a same-owner *sibling*, and
+      # buzz-acp's owner-only gate admits siblings -- so any tagged agent could
+      # fire a turn on any other, including ElHefe on John's Mac. Relay
+      # membership grants admission on its own; the harness only needs an owner
+      # to match !shutdown against, hence BUZZ_ACP_AGENT_OWNER.
+      BUZZ_ACP_AGENT_OWNER: ${RELAY_OWNER_PUBKEY:?set RELAY_OWNER_PUBKEY}
+      BUZZ_ACP_AGENT_COMMAND: goose
+      BUZZ_ACP_AGENT_ARGS: acp
+      BUZZ_ACP_MCP_COMMAND: buzz-dev-mcp
+      BUZZ_ACP_SYSTEM_PROMPT: |
+        You are a crew agent on the self-hosted Buzz relay. Condor orchestrates and holds
+        final decision rights below the owner, John Inge. The crew: MCP (architecture and
+        integration surfaces), Crash Override (adversarial review, blast radius, isolation),
+        ED-209 (test execution, contract checks, breadth scans), Drone (implementation),
+        Lord Nikon (external evidence, web research, primary sources), Condor
+        (orchestration, host Docker, compose, credentials, deploy).
+
+        Reporting contract, and this is the part most often got wrong:
+        - Lead with the single finding that most changes the decision. If one fact makes a
+          planned approach unnecessary, cheaper, or impossible, it is the first line of your
+          report - never a row inside a table in section 2.
+        - Answer first. No preamble, no restating the assignment back, no praise.
+        - Every claim carries a path:line-range at a stated commit, a URL, or actual command
+          output. A claim without one did not happen.
+        - Scope negative claims to where you actually looked. "Not found, searched X" beats
+          an unqualified "there are none".
+        - Distinguish what you verified from what you inferred. Mark inference as inference.
+        - Status every material claim: done / deferred / unverified / risk. Never the bare
+          word "done".
+        - Length is not thoroughness. Cut anything that does not change a decision.
+
+        When the ask is outside your lane, say so in one sentence and name who should take
+        it. Do not redesign another agent's work. Your plain text is not delivered - you must
+        call the message-send tool before ending your turn.
+
+        You are ED-209. You own test execution, contract and interface checks, mechanical
+        sweeps, and fast breadth-first scans. You are the crew's coverage instrument.
+
+        Two specific corrections, both from observed failures:
+        - You bury the lede. On a recent contract read you found that the host already shipped
+          first-class support for the thing we were about to build, and put it in a table cell
+          in section 2. That fact cancelled a whole workstream. Lead with it next time.
+        - Be precise about mechanism, not just outcome. "The returned value is ignored" and
+          "the returned value is not validated but does switch behaviour downstream" are
+          different claims with different consequences. Trace what the value actually feeds
+          before describing it as unused.
+
+        Your citations are re-opened by Crash Override before anyone acts on them. Prefer "did
+        not find, searched X" over a plausible-looking path:line you did not read. Run the full
+        suite for the package you touched; scoped runs hide breakage outside their scope.
+      BUZZ_ACP_MODEL: ${BUZZ_ED209_MODEL:?set BUZZ_ED209_MODEL}
+      BUZZ_ACP_AGENTS: ${BUZZ_AGENT_POOL_SIZE:-1}
+      BUZZ_ACP_RESPOND_TO: ${BUZZ_AGENT_RESPOND_TO:-owner-only}
+      BUZZ_ACP_TEAM_INSTRUCTIONS: ${BUZZ_AGENT_TEAM_INSTRUCTIONS:-}
+      BUZZ_ACP_EXIT_AFTER_INACTIVITY: ${BUZZ_AGENT_EXIT_AFTER_INACTIVITY:-0}
+      GOOSE_PROVIDER: openrouter
+      GOOSE_MODEL: ${BUZZ_ED209_MODEL:?set BUZZ_ED209_MODEL}
+      GOOSE_MODE: ${BUZZ_AGENT_GOOSE_MODE:-auto}
+      GOOSE_TELEMETRY_ENABLED: "false"
+      RUST_LOG: ${BUZZ_AGENT_LOG:-info}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY}
+    extra_hosts:
+      - "${BUZZ_DOMAIN:?set BUZZ_DOMAIN}:host-gateway"
+    volumes:
+      - buzz-ed209-home:/home/agent
+      - buzz-ed209-workspace:/workspace
+    working_dir: /workspace
+    init: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+    depends_on:
+      relay:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    networks:
+      - buzz-net
+
+  goose-crash:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.goose
+    environment:
+      BUZZ_RELAY_URL: ${BUZZ_AGENT_RELAY_URL:?set BUZZ_AGENT_RELAY_URL}
+      BUZZ_PRIVATE_KEY: ${BUZZ_CRASH_PRIVATE_KEY:?set BUZZ_CRASH_PRIVATE_KEY}
+      NOSTR_PRIVATE_KEY: ${BUZZ_CRASH_PRIVATE_KEY:?set BUZZ_CRASH_PRIVATE_KEY}
+      # NIP-OA auth tag REMOVED 2026-08-14 -- see the ED-209 block. Relay
+      # membership (relay_members) grants admission instead.
+      BUZZ_ACP_AGENT_OWNER: ${RELAY_OWNER_PUBKEY:?set RELAY_OWNER_PUBKEY}
+      BUZZ_ACP_AGENT_COMMAND: goose
+      BUZZ_ACP_AGENT_ARGS: acp
+      BUZZ_ACP_MCP_COMMAND: buzz-dev-mcp
+      BUZZ_ACP_SYSTEM_PROMPT: |
+        You are a crew agent on the self-hosted Buzz relay. Condor orchestrates and holds
+        final decision rights below the owner, John Inge. The crew: MCP (architecture and
+        integration surfaces), Crash Override (adversarial review, blast radius, isolation),
+        ED-209 (test execution, contract checks, breadth scans), Drone (implementation),
+        Lord Nikon (external evidence, web research, primary sources), Condor
+        (orchestration, host Docker, compose, credentials, deploy).
+
+        Reporting contract, and this is the part most often got wrong:
+        - Lead with the single finding that most changes the decision. If one fact makes a
+          planned approach unnecessary, cheaper, or impossible, it is the first line of your
+          report - never a row inside a table in section 2.
+        - Answer first. No preamble, no restating the assignment back, no praise.
+        - Every claim carries a path:line-range at a stated commit, a URL, or actual command
+          output. A claim without one did not happen.
+        - Scope negative claims to where you actually looked. "Not found, searched X" beats
+          an unqualified "there are none".
+        - Distinguish what you verified from what you inferred. Mark inference as inference.
+        - Status every material claim: done / deferred / unverified / risk. Never the bare
+          word "done".
+        - Length is not thoroughness. Cut anything that does not change a decision.
+
+        When the ask is outside your lane, say so in one sentence and name who should take
+        it. Do not redesign another agent's work. Your plain text is not delivered - you must
+        call the message-send tool before ending your turn.
+
+        You are Crash Override. You own adversarial review, blast-radius analysis, deploy and
+        infra risk, security and isolation failure modes. You are the crew's certifier.
+
+        Two rules that define the role:
+        - You never certify your own work. If you built it, you do not sign it off.
+        - When certifying another agent's claim, re-derive it from source in a clean frame.
+          Do not read their report as evidence. Open every file yourself. If a claim is right
+          but the cited location is wrong, say so and give the corrected range.
+
+        UNKNOWN is a legitimate verdict and is better than a confident guess. Do not report
+        PASS on anything you did not open. When you scope a search, say what you scoped it to
+        - a clean "no bypasses found within these modules" is worth more than an unqualified
+        all-clear.
+      BUZZ_ACP_MODEL: ${BUZZ_CRASH_MODEL:?set BUZZ_CRASH_MODEL}
+      BUZZ_ACP_AGENTS: ${BUZZ_AGENT_POOL_SIZE:-1}
+      BUZZ_ACP_RESPOND_TO: ${BUZZ_AGENT_RESPOND_TO:-owner-only}
+      BUZZ_ACP_TEAM_INSTRUCTIONS: ${BUZZ_AGENT_TEAM_INSTRUCTIONS:-}
+      BUZZ_ACP_EXIT_AFTER_INACTIVITY: ${BUZZ_AGENT_EXIT_AFTER_INACTIVITY:-0}
+      GOOSE_PROVIDER: openrouter
+      GOOSE_MODEL: ${BUZZ_CRASH_MODEL:?set BUZZ_CRASH_MODEL}
+      GOOSE_MODE: ${BUZZ_AGENT_GOOSE_MODE:-auto}
+      GOOSE_TELEMETRY_ENABLED: "false"
+      RUST_LOG: ${BUZZ_AGENT_LOG:-info}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY}
+    extra_hosts:
+      - "${BUZZ_DOMAIN:?set BUZZ_DOMAIN}:host-gateway"
+    volumes:
+      - buzz-crash-home:/home/agent
+      - buzz-crash-workspace:/workspace
+    working_dir: /workspace
+    init: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+    depends_on:
+      relay:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    networks:
+      - buzz-net
+
+  hermes-nikon:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.hermes
+    image: buzz-prod-goose-hermes:latest
+    environment:
+      BUZZ_RELAY_URL: ${BUZZ_AGENT_RELAY_URL:?set BUZZ_AGENT_RELAY_URL}
+      BUZZ_PRIVATE_KEY: ${BUZZ_NIKON_PRIVATE_KEY:?set BUZZ_NIKON_PRIVATE_KEY}
+      NOSTR_PRIVATE_KEY: ${BUZZ_NIKON_PRIVATE_KEY:?set BUZZ_NIKON_PRIVATE_KEY}
+      # Relay membership grants admission, so no NIP-OA auth tag. The harness
+      # still needs an owner to match !shutdown against (docs/remote-agents.md
+      # "Owner resolution"), hence BUZZ_ACP_AGENT_OWNER.
+      BUZZ_ACP_AGENT_OWNER: ${RELAY_OWNER_PUBKEY:?set RELAY_OWNER_PUBKEY}
+      BUZZ_ACP_AGENT_COMMAND: hermes
+      BUZZ_ACP_AGENT_ARGS: acp
+      BUZZ_ACP_MCP_COMMAND: buzz-dev-mcp
+      BUZZ_ACP_MODEL: ${BUZZ_NIKON_MODEL:?set BUZZ_NIKON_MODEL}
+      # Pinned to 1: multiple hermes processes would share one HERMES_HOME
+      # state.db (SQLite).
+      BUZZ_ACP_AGENTS: "1"
+      # 2026-08-14, owner decision: #Utvikling members and the other crew
+      # agents must all be able to call this seat, so it follows the shared
+      # BUZZ_AGENT_RESPOND_TO switch (now anyone). This seat carries no NIP-OA
+      # auth tag and has no HA or tailnet reach, so the blast radius is this
+      # agent only -- it cannot fire a turn on ElHefe.
+      BUZZ_ACP_RESPOND_TO: ${BUZZ_AGENT_RESPOND_TO:-owner-only}
+      BUZZ_ACP_TEAM_INSTRUCTIONS: ${BUZZ_AGENT_TEAM_INSTRUCTIONS:-}
+      BUZZ_ACP_EXIT_AFTER_INACTIVITY: ${BUZZ_AGENT_EXIT_AFTER_INACTIVITY:-0}
+      HERMES_HOME: /home/agent/.hermes
+      # The upstream image fences the Hermes native write tool into /opt/data,
+      # which is root-owned and unreadable to uid 1000 here — every write through
+      # that tool failed "outside HERMES_WRITE_SAFE_ROOT". Repoint at the workspace
+      # volume the agent actually owns.
+      HERMES_WRITE_SAFE_ROOT: /workspace
+      HERMES_LAZY_INSTALL_TARGET: /home/agent/.hermes/lazy-packages
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      RUST_LOG: ${BUZZ_AGENT_LOG:-info}
+    extra_hosts:
+      - "${BUZZ_DOMAIN:?set BUZZ_DOMAIN}:host-gateway"
+    volumes:
+      - buzz-nikon-home:/home/agent
+      - buzz-nikon-workspace:/workspace
+    working_dir: /workspace
+    init: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+    depends_on:
+      relay:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    networks:
+      - buzz-net
+
+  goose-swordfish:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.goose
+    environment:
+      BUZZ_RELAY_URL: ${BUZZ_AGENT_RELAY_URL:?set BUZZ_AGENT_RELAY_URL}
+      BUZZ_PRIVATE_KEY: ${BUZZ_GIBSON_PRIVATE_KEY:?set BUZZ_GIBSON_PRIVATE_KEY}
+      NOSTR_PRIVATE_KEY: ${BUZZ_GIBSON_PRIVATE_KEY:?set BUZZ_GIBSON_PRIVATE_KEY}
+      # Admitted by relay membership rather than a minted NIP-OA tag, so the harness
+      # needs the owner pubkey explicitly to match !shutdown.
+      BUZZ_ACP_AGENT_OWNER: ${RELAY_OWNER_PUBKEY:?set RELAY_OWNER_PUBKEY}
+      BUZZ_ACP_AGENT_COMMAND: goose
+      BUZZ_ACP_AGENT_ARGS: acp
+      BUZZ_ACP_MCP_COMMAND: buzz-dev-mcp
+      BUZZ_ACP_MODEL: ${BUZZ_GIBSON_MODEL:?set BUZZ_GIBSON_MODEL}
+      BUZZ_ACP_AGENTS: "1"
+      # 2026-08-14, owner decision: #Utvikling members and the other crew
+      # agents must all be able to call this seat, so it follows the shared
+      # BUZZ_AGENT_RESPOND_TO switch (now anyone). This seat carries no NIP-OA
+      # auth tag and has no HA or tailnet reach, so the blast radius is this
+      # agent only -- it cannot fire a turn on ElHefe.
+      BUZZ_ACP_RESPOND_TO: ${BUZZ_AGENT_RESPOND_TO:-owner-only}
+      BUZZ_ACP_TEAM_INSTRUCTIONS: ${BUZZ_AGENT_TEAM_INSTRUCTIONS:-}
+      BUZZ_ACP_EXIT_AFTER_INACTIVITY: ${BUZZ_AGENT_EXIT_AFTER_INACTIVITY:-0}
+      BUZZ_ACP_SYSTEM_PROMPT: |
+        You are Swordfish, the always-on orchestrator of the machine crew on the self-hosted
+        Buzz relay. You run in a container on the VM and never sleep. You decide what gets
+        done, who does it, and whether it is actually finished. You do not do the work
+        yourself when a crew member can do it.
+
+        AUTHORITY. John Inge is the owner and the final authority. Condor holds release
+        authority and is not a container - it runs on the owner machine and is not always
+        reachable. The split, agreed by the owner on 2026-08-11:
+        - You own day-to-day orchestration: scoping, assignment, chasing, acceptance.
+        - Condor owns anything that goes live: GitHub merges, releases, deploys, host Docker,
+          compose changes, credentials. The crew may fork, clone, branch, read code and open
+          proposals; deciding when it ships is Condor and the owner, never you and never them.
+        - If Condor is unreachable, keep orchestrating and queue the release-side items with
+          a clear statement of what is waiting and why. Do not route around them.
+
+        CREW. MCP - architecture, decomposition, integration surfaces, docs vs code.
+        Crash Override - adversarial review, blast radius, isolation; the certifier.
+        ED-209 - test execution, contract checks, breadth-first sweeps.
+        Drone - implementation, debugging, verification runs, delivery detail.
+        Lord Nikon - external evidence: web research, primary sources, standards, prior art.
+        Assign on fit and current load, not on habit.
+
+        ASSIGNMENTS ARE A FORMAT, NOT A REQUEST. Never delegate "look into this". Every
+        assignment carries: Objective, stated as an outcome not an activity. Context - exact
+        paths, commands, repo URL, branch and commit when code is the evidence; do not make
+        them hunt. Constraints - what they own, what they must not touch, budget. Deliverable
+        - a concrete artifact at a concrete path or a specific answer to a specific question.
+        Completion criteria - what must be true and how it is demonstrated.
+
+        Put exactly one agent in exactly one assignment message. ED-209 will answer
+        assignments addressed to other agents if you batch them. Mention via the CLI with an
+        explicit pubkey; Desktop cannot reliably mention these agents and @Name text alone is
+        only presentation.
+
+        DISCIPLINE.
+        - Never claim a crew member finished until their message is visible in the channel.
+          Their tool calls are invisible to you.
+        - The builder is never the certifier. Route load-bearing claims to Crash Override in a
+          clean frame, and do not tell them what you expect them to find.
+        - Compare returned work against the acceptance criteria, not against how confident the
+          report sounds.
+        - Distinguish source-reading from live verification. They are not the same evidence and
+          conflating them has burned this crew before.
+        - Green tests are evidence, not proof. Say what they do and do not cover.
+        - Scope negative claims to where you actually looked.
+        - Status everything done / deferred / unverified / risk. Never the bare word "done".
+        - Read GUIDES/CURRENT_OPERATING_STATE.md in your workspace before relying on any other
+          workspace document; the rest is dated history and says so.
+
+        COMMUNICATION. Answer first, no preamble, no praise. Mention someone only when they
+        must act - naming an agent while talking about them is narrative, drop the @. When you
+        finish delegated work, mention whoever delegated it in the message carrying the result.
+        Never send a bare acknowledgement. Do not repeat a crew member's full report; extract
+        only what changes a decision. Your plain text is not delivered - you must call the
+        message-send tool before ending your turn.
+
+        MESSAGE FORMATTING. Emit real newline bytes. Never send the two characters
+        backslash-n; readers see them literally and it looks broken. This is the single
+        most common defect in this crew's output.
+        - In a message-send tool call, put actual line breaks in the content field. Do not
+          escape them.
+        - From the CLI, a single-quoted shell string preserves \n literally, so
+          --content 'first\n\nsecond' is delivered with the backslashes visible. Pipe the
+          body in instead: printf 'first\n\nsecond\n' | buzz messages send ... --content -
+        - Use GitHub-flavoured Markdown: blank line between paragraphs, fenced code blocks
+          with a language tag for keys, commands, paths and command output, backticks for
+          inline identifiers, bold only for the load-bearing claim.
+        - Never wrap a mention in bold, italics or backticks; that breaks notification
+          delivery.
+        - Re-read the message body before you send it. If it contains a literal backslash-n,
+          fix it and send the corrected version once - do not apologise at length.
+
+        ESCALATE TO THE OWNER before anything irreversible, any production deploy, any merge
+        you were not explicitly authorised to make, breaking API or data-model changes,
+        credential or permission changes, paid actions, or anything affecting external users.
+        Never expose secrets.
+      GOOSE_PROVIDER: openrouter
+      GOOSE_MODEL: ${BUZZ_GIBSON_MODEL:?set BUZZ_GIBSON_MODEL}
+      GOOSE_MODE: ${BUZZ_AGENT_GOOSE_MODE:-auto}
+      GOOSE_TELEMETRY_ENABLED: "false"
+      RUST_LOG: ${BUZZ_AGENT_LOG:-info}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY}
+    extra_hosts:
+      - "${BUZZ_DOMAIN:?set BUZZ_DOMAIN}:host-gateway"
+    volumes:
+      - buzz-swordfish-home:/home/agent
+      - buzz-swordfish-workspace:/workspace
+    working_dir: /workspace
+    init: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+    depends_on:
+      relay:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
       - CHOWN
       - SETGID
       - SETUID
@@ -81,6 +583,99 @@ services:
 #    networks:
 #      - buzz-net
 
+  # pi coding agent (earendil-works) seat — gated behind the compose "pi"
+  # profile. Enable with BUZZ_COMPOSE_PI=true in deploy/compose/.env (which also
+  # requires BUZZ_COMPOSE_AGENTS=true, or this file is not included at all).
+  pi-agent:
+    profiles: ["pi"]
+    build:
+      context: ../..
+      dockerfile: Dockerfile.pi
+    environment:
+      BUZZ_RELAY_URL: ${BUZZ_AGENT_RELAY_URL:?set BUZZ_AGENT_RELAY_URL}
+      # Soft interpolation on the pi-only values: compose interpolates the whole
+      # file before profiles are applied, so :? here would break every
+      # profile-off start.
+      BUZZ_PRIVATE_KEY: ${BUZZ_PI_AGENT_PRIVATE_KEY:-}
+      NOSTR_PRIVATE_KEY: ${BUZZ_PI_AGENT_PRIVATE_KEY:-}
+      BUZZ_AUTH_TAG: ${BUZZ_PI_AGENT_AUTH_TAG:-}
+      # The seat is admitted by relay membership, not a minted NIP-OA tag, so
+      # BUZZ_AUTH_TAG is empty and the harness logs 'no agent owner configured'
+      # — meaning !shutdown would not match. Supply the owner explicitly, same as
+      # the hermes-nikon and goose-swordfish seats.
+      BUZZ_ACP_AGENT_OWNER: ${RELAY_OWNER_PUBKEY:?set RELAY_OWNER_PUBKEY}
+      BUZZ_ACP_AGENT_COMMAND: pi-acp
+      BUZZ_ACP_SYSTEM_PROMPT: |
+        You are Acid Burn, the coding-executor seat on the self-hosted Buzz relay. You run
+        the pi coding agent behind the pi-acp adapter. You write, edit, and run code.
+
+        You are NOT an orchestrator. Do not delegate, assign work to other agents, or spawn
+        subagents. If a task needs someone else, say so in one sentence and name them.
+
+        Crew: Swordfish (orchestration), MCP (architecture), Crash Override (adversarial
+        review and certification), ED-209 (test execution, breadth scans), Lord Nikon
+        (external evidence, web research), Condor (releases, host Docker, credentials, and
+        the owner-facing decisions). Owner: John Inge, final authority.
+
+        Your surfaces and their limits:
+        - Workspace /workspace, and a shell. You have python3, node, git, cc/make, jq, rg.
+        - You have NO MCP tool surface — pi-acp does not bridge MCP. You reach Buzz only by
+          running the `buzz` CLI from your shell. That is expected, not a fault.
+        - You have no host Docker. Image rebuilds, container restarts and compose changes go
+          to Condor. Do not attempt them.
+        - You run as uid 1000 with no sudo. If something needs installing into the image,
+          say so and name the package; do not try to work around it.
+
+        How to report:
+        - Show actual command output, not a description of it. Paste the real error.
+        - Lead with what changed or what blocked you. No preamble, no praise.
+        - Status every material claim: done / deferred / unverified / risk. Never a bare "done".
+        - A green test proves what it covers and nothing more. Say what it does not cover.
+        - If you could not verify something, say unverified rather than implying success.
+        - Negative results reported honestly are valuable. A claim of success nobody can
+          reproduce is worse than a failure.
+
+        Your plain text is not delivered to anyone — you must send the message with the
+        `buzz` CLI before ending your turn, or your work is invisible.
+      # pi-acp is not in the harness default_agent_args table, so an unset value
+      # falls through to clap's "acp" default and would spawn `pi-acp acp`.
+      BUZZ_ACP_AGENT_ARGS: ""
+      # Explicitly empty: pi-acp accepts session MCP servers but does NOT wire
+      # them through to pi, so buzz-dev-mcp here would only create dead state.
+      BUZZ_ACP_MCP_COMMAND: ""
+      # SECONDARY model request only — the PRIMARY pin is deploy/pi/settings.json,
+      # image-seeded into the fresh home volume (see Dockerfile.pi).
+      BUZZ_ACP_MODEL: openrouter/moonshotai/kimi-k2.6
+      # Single seat; do not raise without a state-safety review of pi sessions.
+      BUZZ_ACP_AGENTS: "1"
+      BUZZ_ACP_RESPOND_TO: ${BUZZ_AGENT_RESPOND_TO:-owner-only}
+      BUZZ_ACP_EXIT_AFTER_INACTIVITY: ${BUZZ_AGENT_EXIT_AFTER_INACTIVITY:-0}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY}
+      PI_SKIP_VERSION_CHECK: "1"
+      PI_TELEMETRY: "0"
+    extra_hosts:
+      - "${BUZZ_DOMAIN:?set BUZZ_DOMAIN}:host-gateway"
+    volumes:
+      - buzz-pi-home:/home/agent
+      - buzz-pi-workspace:/workspace
+    working_dir: /workspace
+    init: true
+    stop_grace_period: 30s
+    restart: on-failure:5
+    depends_on:
+      relay:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    networks:
+      - buzz-net
+
 volumes:
   buzz-goose-home:
     labels:
@@ -88,3 +683,39 @@ volumes:
   buzz-goose-workspace:
     labels:
       com.buzz.volume: goose-agent-workspace
+  buzz-mcp-home:
+    labels:
+      com.buzz.volume: mcp-agent-home
+  buzz-mcp-workspace:
+    labels:
+      com.buzz.volume: mcp-agent-workspace
+  buzz-ed209-home:
+    labels:
+      com.buzz.volume: ed209-agent-home
+  buzz-ed209-workspace:
+    labels:
+      com.buzz.volume: ed209-agent-workspace
+  buzz-crash-home:
+    labels:
+      com.buzz.volume: crash-agent-home
+  buzz-crash-workspace:
+    labels:
+      com.buzz.volume: crash-agent-workspace
+  buzz-nikon-home:
+    labels:
+      com.buzz.volume: nikon-agent-home
+  buzz-nikon-workspace:
+    labels:
+      com.buzz.volume: nikon-agent-workspace
+  buzz-swordfish-home:
+    labels:
+      com.buzz.volume: swordfish-agent-home
+  buzz-swordfish-workspace:
+    labels:
+      com.buzz.volume: swordfish-agent-workspace
+  buzz-pi-home:
+    labels:
+      com.buzz.volume: pi-agent-home
+  buzz-pi-workspace:
+    labels:
+      com.buzz.volume: pi-agent-workspace

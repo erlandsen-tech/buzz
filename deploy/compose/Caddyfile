@@ -1,5 +1,27 @@
 {$BUZZ_DOMAIN} {
   encode zstd gzip
 
-  reverse_proxy relay:3000
+  # Access logging for invite-link diagnostics. Invite codes are bearer
+  # secrets, so /invite/<code> is masked before it reaches the log.
+  log {
+    output stdout
+    format filter {
+      wrap json
+      fields {
+        request>uri regexp "/invite/[^/?#]+" "/invite/REDACTED"
+        request>headers>Authorization delete
+        request>headers>Cookie delete
+      }
+    }
+  }
+
+  # NIP-AB pairing sidecar (no auth, no persistence). Must precede the
+  # catch-all: the closed main relay rejects the ephemeral pairing key at AUTH.
+  handle /pair* {
+    reverse_proxy pair-relay:5000
+  }
+
+  handle {
+    reverse_proxy relay:3000
+  }
 }

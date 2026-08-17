@@ -2,7 +2,7 @@
 
 # Runtime ABI image published by block/buzz. Keep this immutable because the
 # resulting container receives the agent's Nostr private key.
-ARG SPRIG_IMAGE=ghcr.io/block/buzz-sprig:sha-6530b58@sha256:17facfc7608d8ddb33bc056c9aaba1098f4ef6abe5655702fbfd7584d1f74d76
+ARG SPRIG_IMAGE=ghcr.io/block/buzz-sprig:sha-068a83b@sha256:913da5e734c22167ee9ece8854d11a036894fdc3db1b3c8ed0391e89c5e9b23a
 FROM ${SPRIG_IMAGE}
 
 USER root
@@ -32,6 +32,17 @@ RUN set -eux; \
     goose --version; \
     rm -rf "/tmp/${archive}" /tmp/goose; \
     apk del .goose-install-deps
+
+# Test/verification toolchain. Alpine musl builds only -- glibc Node tarballs
+# fail here with "Error loading shared library libstdc++.so.6". openssh-client
+# is needed for git-over-SSH remotes.
+RUN set -eux; \
+    apk add --no-cache nodejs npm openssh-client; \
+    npm i -g --cache /tmp/npmcache pnpm@10.14.0; \
+    rm -rf /tmp/npmcache; \
+    node --version; \
+    npm --version; \
+    pnpm --version
 
 COPY --chmod=0755 scripts/goose-agent-entrypoint.sh /usr/local/bin/goose-agent-entrypoint
 

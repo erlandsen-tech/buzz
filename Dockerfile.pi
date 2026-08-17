@@ -1,0 +1,61 @@
+# syntax=docker/dockerfile:1.7
+
+# Runtime ABI image published by block/buzz — carries the buzz-acp harness.
+# Copied from Dockerfile.goose:3-5; keep immutable because the resulting
+# container receives the agent's Nostr private key.
+ARG SPRIG_IMAGE=ghcr.io/block/buzz-sprig:sha-068a83b@sha256:913da5e734c22167ee9ece8854d11a036894fdc3db1b3c8ed0391e89c5e9b23a
+FROM ${SPRIG_IMAGE}
+
+USER root
+
+ARG PI_ACP_VERSION=0.0.33
+ARG PI_CODING_AGENT_VERSION=0.84.1
+
+# pi-acp and the pi coding agent are Node packages; the sprig Alpine base has
+# no Node runtime. Install Node from Alpine, then both pins exactly. su-exec is
+# needed by the entrypoint wrapper (Dockerfile.goose installs it the same way).
+# pi-acp@0.0.33 spawns only `pi --mode rpc --no-themes`, so both bins must exist.
+#
+# Hardening: --ignore-scripts blocks npm lifecycle scripts at install time;
+# --omit=dev skips devDependencies. Both `pi --version` and `pi-acp --version`
+# are build-time assertions: the image fails to build if either pin, its bin
+# shim, or the Alpine Node ABI is broken. `npm cache clean --force` drops the
+# tarball cache from the layer.
+# Version assertions: `pi --version` prints the real version, but pi-acp ignores
+# argv except --terminal-login, so `pi-acp --version` exits 0 silently and can
+# never fail — verified in the built image, where a bogus flag also exits 0. The
+# npm ls checks are the assertions that actually fail on a version mismatch.
+RUN set -eux; \
+    apk add --no-cache nodejs npm su-exec; \
+    npm install -g --ignore-scripts --omit=dev \
+        "pi-acp@${PI_ACP_VERSION}" \
+        "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}"; \
+    pi --version; \
+    npm ls -g --depth=0 "pi-acp@${PI_ACP_VERSION}" >/dev/null; \
+    npm ls -g --depth=0 "@earendil-works/pi-coding-agent@${PI_CODING_AGENT_VERSION}" >/dev/null; \
+    pi-acp --version; \
+    npm cache clean --force
+
+# Coding-executor toolchain. The seat shipped with Node only, so its first real
+# task died on `python3: command not found` — it could write code but not run it.
+# python3/pip for scripts and test suites, build-base for anything with a native
+# extension, jq because half of this stack speaks JSON. git/curl/rg already come
+# from the sprig base.
+RUN set -eux; \
+    apk add --no-cache python3 py3-pip build-base jq; \
+    python3 --version; \
+    cc --version >/dev/null; \
+    jq --version
+
+# Primary model pin: pi's own settings file (pi-acp has no provider/model flag).
+# Seeding mechanism, no new entrypoint: the dedicated named volume buzz-pi-home
+# is EMPTY on first start, and Docker copies image content at the mount point
+# into an empty named volume on first mount — so this lands at
+# /home/agent/.pi/agent/settings.json on first run and persists thereafter.
+COPY --chown=agent:agent deploy/pi/settings.json /home/agent/.pi/agent/settings.json
+
+# Reuses scripts/goose-agent-entrypoint.sh verbatim, installed under a
+# pi-specific name so the two images stay self-describing.
+COPY --chmod=0755 scripts/goose-agent-entrypoint.sh /usr/local/bin/pi-agent-entrypoint
+
+ENTRYPOINT ["/usr/local/bin/pi-agent-entrypoint"]

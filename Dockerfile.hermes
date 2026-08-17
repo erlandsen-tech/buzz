@@ -1,0 +1,61 @@
+# syntax=docker/dockerfile:1.7
+#
+# Lord Nikon — Hermes Agent under the buzz-acp harness.
+#
+# Base is INVERTED relative to Dockerfile.goose. Goose publishes native musl
+# archives so it can sit on the Alpine sprig image; Hermes cannot. Upstream
+# blocks pip/wheel installs outright ("Building wheels or sdists for
+# hermes-agent is not supported") and ships a Debian 13 image with a
+# hand-compiled SQLite and Node 26. So Hermes stays on its own image and the
+# harness is copied in instead.
+#
+# sprig is musl-dynamic (`ldd` -> /lib/ld-musl-x86_64.so.1), so Debian needs
+# the musl loader for it to exec at all.
+
+ARG SPRIG_IMAGE=ghcr.io/block/buzz-sprig:sha-068a83b@sha256:913da5e734c22167ee9ece8854d11a036894fdc3db1b3c8ed0391e89c5e9b23a
+ARG HERMES_IMAGE=nousresearch/hermes-agent:latest
+
+FROM ${SPRIG_IMAGE} AS sprig
+FROM ${HERMES_IMAGE}
+
+USER root
+
+# musl loader for the sprig binary; gosu replaces Alpine su-exec.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends musl gosu; \
+    rm -rf /var/lib/apt/lists/*; \
+    ln -sf /lib/x86_64-linux-musl/libc.so /lib/ld-musl-x86_64.so.1 || true
+
+# Harness + its symlink farm, verbatim from the published sprig image.
+COPY --from=sprig /usr/local/bin/sprig /usr/local/bin/sprig
+COPY --from=sprig /usr/local/bin/sprig-entrypoint /usr/local/bin/sprig-entrypoint
+RUN set -eux; \
+    for n in buzz buzz-acp buzz-agent buzz-dev-mcp git-credential-nostr git-sign-nostr rg tree; do \
+        ln -sf sprig "/usr/local/bin/$n"; \
+    done; \
+    buzz-acp --version || true; \
+    buzz --help >/dev/null
+
+# uid 1000 to match the goose fleet convention and the named-volume ownership
+# repair in the entrypoint.
+RUN set -eux; \
+    (getent group agent || groupadd -g 1000 agent); \
+    (id -u agent >/dev/null 2>&1 || useradd -u 1000 -g 1000 -m -d /home/agent -s /bin/sh agent); \
+    mkdir -p /workspace; \
+    chown -R agent:agent /home/agent /workspace; \
+    chmod 0755 /home/agent
+
+ENV HERMES_HOME=/home/agent/.hermes
+
+# uv installs tool shims into $HOME/.local/bin, which is not on the upstream image
+# PATH (that carries /opt/data/.local/bin, the hermes user home, not the agent one).
+# Without this, browser_exec falls back to just-in-time `uvx browser-use` resolution
+# on every call instead of using the installed binary.
+ENV PATH=/home/agent/.local/bin:${PATH}
+
+COPY deploy/hermes/config.yaml deploy/hermes/SOUL.md /usr/share/hermes-seed/
+COPY --chmod=0755 scripts/hermes-agent-entrypoint.sh /usr/local/bin/hermes-agent-entrypoint
+
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/hermes-agent-entrypoint"]
