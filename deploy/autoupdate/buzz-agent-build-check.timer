@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly agent image build check (02:30 UTC)
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=false
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target
