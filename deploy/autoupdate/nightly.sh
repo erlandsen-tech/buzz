@@ -11,18 +11,34 @@
 # messages from its members -- Condor's own key is not on this machine.
 set -uo pipefail
 
-STATE_DIR=/opt/buzz-autoupdate
+STATE_DIR="${BUZZ_AUTOUPDATE_DIR:-/opt/buzz-autoupdate}"
 BUILD_STATUS="${STATE_DIR}/agent-build.status"
 PROMOTE_LOG="${STATE_DIR}/agent-promote.jsonl"
 RELAY_LOG="${STATE_DIR}/updates.jsonl"
 PROMOTE_SWITCH="${STATE_DIR}/PROMOTE_ENABLED"
 REPORT_CONTAINER="${BUZZ_REPORT_CONTAINER:-buzz-prod-goose-swordfish-1}"
-REPORT_CHANNEL="${BUZZ_REPORT_CHANNEL:-76686747-a635-4eb8-bd7c-691dcc782387}"
+# Scheduled jobs. Owner's call 2026-08-17: every scheduled-job report lands here,
+# not in Driftsautonomisering, so one channel is the whole cron surface.
+REPORT_CHANNEL="${BUZZ_REPORT_CHANNEL:-950674b5-0f1f-412b-9389-f29c9b30584d}"
 OWNER_PUBKEY="${BUZZ_REPORT_OWNER:-749745220321323ad9c340d92ea39e45028fadca474d5c726967f0f6e65450f9}"
+# The relay job runs on its own timer, so its last line is normally from tonight's
+# relay run -- but if that timer dies the line just stops moving. Anything older
+# than this window is reported as stale rather than silently accepted as tonight's
+# result. Wider than the 24h timer period so a late run is not called stale.
+RELAY_STALE_HOURS="${BUZZ_RELAY_STALE_HOURS:-30}"
 
 last_detail() { # last_detail <jsonl> <field>
-  [[ -s "$1" ]] || { printf 'ingen kjoringer\n'; return; }
+  [[ -s "$1" ]] || { printf 'ingen kjoringer\n'; return 0; }
   tail -n1 "$1" | sed -e "s/.*\"$2\":\"\([^\"]*\)\".*/\1/"
+  return 0
+}
+
+age_hours() { # age_hours <iso8601-ts> -> whole hours, or empty if unparseable
+  local when
+  when="$(date -u -d "$1" +%s 2>/dev/null)" || return 0
+  [[ -n "${when}" ]] || return 0
+  printf '%s\n' "$(( ( $(date -u +%s) - when ) / 3600 ))"
+  return 0
 }
 
 build_check_exit=0
@@ -41,11 +57,31 @@ build_outcome="$(awk '{print $2}' <<<"${build_status}")"
 # Stamped, because the relay job runs on its own timer: without the timestamp a
 # months-old line reads as tonight's result. A rollback drill from this morning
 # looked exactly like an overnight failure the first time this report ran.
-relay_line="$(last_detail "${RELAY_LOG}" ts) $(last_detail "${RELAY_LOG}" outcome): $(last_detail "${RELAY_LOG}" detail)"
+relay_ts="$(last_detail "${RELAY_LOG}" ts)"
+relay_outcome="$(last_detail "${RELAY_LOG}" outcome)"
+relay_age="$(age_hours "${relay_ts}")"
+relay_line="${relay_ts} ${relay_outcome}: $(last_detail "${RELAY_LOG}" detail)"
 
+# Three independent jobs, one headline. The headline is red if ANY of them is,
+# because the first version of this report called the night green while the relay
+# line right under it said the candidate had failed its gates and been rolled
+# back -- a green headline over a red body is worse than no report at all.
 bad=""
 case "${build_outcome}" in green|noop) ;; *) bad="bygg=${build_outcome:-ukjent}" ;; esac
 case "${promote_outcome}" in off|promoted) ;; *) bad="${bad:+${bad} }promote=${promote_outcome}" ;; esac
+# A rollback is the guardrail working, not an outage -- but it means the relay is
+# still on the old digest and someone has to look. Judged only while fresh: past
+# the window the line is stale, which is its own red (a dead timer reports nothing
+# and would otherwise show as green forever on its last good line).
+if [[ -z "${relay_age}" ]]; then
+  bad="${bad:+${bad} }relay=ingen-kjoringer"
+  relay_line="ingen kjoringer"
+elif (( relay_age > RELAY_STALE_HOURS )); then
+  bad="${bad:+${bad} }relay=foreldet"
+  relay_line="${relay_line} [${relay_age}t gammel - relay-timeren har ikke kjort]"
+else
+  case "${relay_outcome}" in deployed|noop) ;; *) bad="${bad:+${bad} }relay=${relay_outcome}" ;; esac
+fi
 
 if [[ -z "${bad}" ]]; then
   headline="Nattlig autoupdate: **gronn**."
@@ -71,9 +107,18 @@ body="$(
 mention=()
 [[ -n "${bad}" ]] && mention=(--mention "${OWNER_PUBKEY}")
 
-printf '%s' "${body}" | docker exec -i "${REPORT_CONTAINER}" \
-  buzz messages send --channel "${REPORT_CHANNEL}" --content - "${mention[@]}" \
-  >>"${STATE_DIR}/report.log" 2>&1 ||
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) report send FAILED" >>"${STATE_DIR}/report.log"
+# BUZZ_REPORT_DRYRUN prints the message instead of sending it. This exists because
+# every defect this script has ever had was found by running it, and without a way
+# to see the rendered report you cannot check the headline without spamming the
+# channel.
+if [[ -n "${BUZZ_REPORT_DRYRUN:-}" ]]; then
+  printf '%s\n' "${body}"
+  printf -- '--- ville sendt til kanal %s, mention: %s\n' "${REPORT_CHANNEL}" "${mention[*]:-ingen}"
+else
+  printf '%s' "${body}" | docker exec -i "${REPORT_CONTAINER}" \
+    buzz messages send --channel "${REPORT_CHANNEL}" --content - "${mention[@]}" \
+    >>"${STATE_DIR}/report.log" 2>&1 ||
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) report send FAILED" >>"${STATE_DIR}/report.log"
+fi
 
 exit "${build_check_exit}"
