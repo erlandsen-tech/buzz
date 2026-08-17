@@ -1,4 +1,7 @@
 [Unit]
+# No timer: nightly.sh drives this job so the nightly report describes the relay
+# run it just made. This unit stays for manual runs and rollback drills
+# (BUZZ_AUTOUPDATE_FORCE_DIGEST), which systemd-run or a plain shell can set.
 Description=Guardrailed auto-update of the buzz relay from ghcr.io/block/buzz:main
 After=docker.service
 Requires=docker.service

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# One nightly entry point: build check -> optional promote -> report.
+# One nightly entry point: relay update -> agent build check -> optional promote
+# -> report.
 #
 # The reporting half is the point. Before this existed both jobs wrote their
 # outcome to a jsonl file on the VM and nothing else, so a red night was
@@ -21,10 +22,10 @@ REPORT_CONTAINER="${BUZZ_REPORT_CONTAINER:-buzz-prod-goose-swordfish-1}"
 # not in Driftsautonomisering, so one channel is the whole cron surface.
 REPORT_CHANNEL="${BUZZ_REPORT_CHANNEL:-950674b5-0f1f-412b-9389-f29c9b30584d}"
 OWNER_PUBKEY="${BUZZ_REPORT_OWNER:-749745220321323ad9c340d92ea39e45028fadca474d5c726967f0f6e65450f9}"
-# The relay job runs on its own timer, so its last line is normally from tonight's
-# relay run -- but if that timer dies the line just stops moving. Anything older
-# than this window is reported as stale rather than silently accepted as tonight's
-# result. Wider than the 24h timer period so a late run is not called stale.
+# The relay line should be from the run this script just made. If it is not -- a
+# relay job that died before logging, or someone running the report alone -- the
+# line just stops moving, and stale is reported rather than accepted as tonight's
+# result. Wider than the 24h period so a late or skipped run is not called stale.
 RELAY_STALE_HOURS="${BUZZ_RELAY_STALE_HOURS:-30}"
 
 last_detail() { # last_detail <jsonl> <field>
@@ -41,26 +42,47 @@ age_hours() { # age_hours <iso8601-ts> -> whole hours, or empty if unparseable
   return 0
 }
 
+# Relay first, and from inside this script rather than on its own timer. The relay
+# job used to fire 45 minutes AFTER this report, so the report's relay line was
+# always the previous night's result -- it described a run that had not happened
+# yet. Owner's call 2026-08-17: one job, one report, same window. The separate
+# buzz-relay-autoupdate.timer is disabled; its .service unit is kept for manual
+# and drill runs.
+if [[ -x "${STATE_DIR}/relay-autoupdate.sh" ]]; then
+  "${STATE_DIR}/relay-autoupdate.sh" >/dev/null 2>&1 || true
+fi
+
+# Stamped, because a relay job that dies before it logs leaves the previous line
+# in place: without the timestamp that reads as tonight's result. A rollback drill
+# from this morning looked exactly like an overnight failure the first time this
+# report ran.
+relay_ts="$(last_detail "${RELAY_LOG}" ts)"
+relay_outcome="$(last_detail "${RELAY_LOG}" outcome)"
+relay_age="$(age_hours "${relay_ts}")"
+relay_line="${relay_ts} ${relay_outcome}: $(last_detail "${RELAY_LOG}" detail)"
+
 build_check_exit=0
 "${STATE_DIR}/agent-build-check.sh" >/dev/null 2>&1 || build_check_exit=$?
 
 promote_outcome="off"
 promote_line="ikke kjort (promotering er av)"
 if [[ -e "${PROMOTE_SWITCH}" ]]; then
-  "${STATE_DIR}/agent-promote.sh" >/dev/null 2>&1 || true
-  promote_outcome="$(last_detail "${PROMOTE_LOG}" outcome)"
-  promote_line="${promote_outcome}: $(last_detail "${PROMOTE_LOG}" detail)"
+  # Promote's readiness gate waits for every seat to report agent_pool_ready, which
+  # it cannot do while the relay is down. Promoting into that would fail the gate
+  # and roll all seven seats back for a reason that has nothing to do with the
+  # candidate -- a second, invented failure on top of the real one.
+  if [[ "${relay_outcome}" == rollback_failed* ]]; then
+    promote_outcome="hoppet_over"
+    promote_line="hoppet over: relay er nede (${relay_outcome}), seter kan ikke naa agent_pool_ready"
+  else
+    "${STATE_DIR}/agent-promote.sh" >/dev/null 2>&1 || true
+    promote_outcome="$(last_detail "${PROMOTE_LOG}" outcome)"
+    promote_line="${promote_outcome}: $(last_detail "${PROMOTE_LOG}" detail)"
+  fi
 fi
 
 build_status="$(cat "${BUILD_STATUS}" 2>/dev/null || echo 'ingen status')"
 build_outcome="$(awk '{print $2}' <<<"${build_status}")"
-# Stamped, because the relay job runs on its own timer: without the timestamp a
-# months-old line reads as tonight's result. A rollback drill from this morning
-# looked exactly like an overnight failure the first time this report ran.
-relay_ts="$(last_detail "${RELAY_LOG}" ts)"
-relay_outcome="$(last_detail "${RELAY_LOG}" outcome)"
-relay_age="$(age_hours "${relay_ts}")"
-relay_line="${relay_ts} ${relay_outcome}: $(last_detail "${RELAY_LOG}" detail)"
 
 # Three independent jobs, one headline. The headline is red if ANY of them is,
 # because the first version of this report called the night green while the relay

@@ -1,11 +1,16 @@
 [Unit]
-Description=Nightly agent build check, optional promote, and channel report (19:00 UTC)
+Description=Nightly relay update, agent build check, optional promote, and channel report (19:00 UTC)
 
 [Timer]
 # Evening on purpose (21:00 CEST): the owner asked for a nightly update, and a
 # job that can recreate all seven seats should land while somebody is awake to
-# read the report it posts. The relay update follows 45 minutes later so the
-# two never recreate containers at the same time.
+# read the report it posts.
+#
+# This is now the only autoupdate timer. The relay update used to have its own at
+# 19:45, i.e. 45 minutes AFTER the report that was supposed to describe it, so the
+# report always carried the previous night's relay line. nightly.sh runs the relay
+# job itself; buzz-relay-autoupdate.service is kept for manual and drill runs but
+# has no timer.
 OnCalendar=*-*-* 19:00:00
 Persistent=false
 RandomizedDelaySec=600

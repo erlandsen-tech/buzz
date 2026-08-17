@@ -1,5 +1,5 @@
 [Unit]
-Description=Nightly build+smoke of the buzz agent images, optional promote, and a report to the ops channel
+Description=Nightly relay update, build+smoke of the buzz agent images, optional promote, and a report to the Scheduled jobs channel
 After=docker.service
 Requires=docker.service
 
