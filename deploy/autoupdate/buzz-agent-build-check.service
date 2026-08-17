@@ -1,0 +1,9 @@
+[Unit]
+Description=Nightly build+smoke test of the buzz agent images against upstream sprig main (never deploys)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/buzz-autoupdate/agent-build-check.sh
+TimeoutStartSec=3600
