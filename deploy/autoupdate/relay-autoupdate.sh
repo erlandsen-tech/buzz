@@ -24,6 +24,12 @@ MIN_FREE_MB=5000
 # the rollback path can be exercised on purpose with a known-bad image.
 FORCE_DIGEST="${BUZZ_AUTOUPDATE_FORCE_DIGEST:-}"
 FORCE_REPO="${BUZZ_AUTOUPDATE_FORCE_REPO:-}"
+# A drill outcome must not be readable as a production one. The nightly report
+# reads the last line of this log, so the forced rollback on 2026-08-17 left a
+# plain `rolled_back` there and was reported hours later as a relay candidate
+# that had failed its gates. Nothing had; the digest was caddy:2-alpine.
+DRILL_TAG=""
+[[ -n "${FORCE_DIGEST}" ]] && DRILL_TAG="_drill"
 
 # Recreating the relay with a partial file set would make every other service an
 # orphan. Always drive compose with the exact set the running project was
@@ -41,8 +47,8 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 
 log_json() {
   # log_json <outcome> <detail> [running_digest] [candidate_digest]
-  printf '{"ts":"%s","outcome":"%s","detail":"%s","running":"%s","candidate":"%s"}\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "${3:-}" "${4:-}" >>"${LOG_FILE}"
+  printf '{"ts":"%s","outcome":"%s%s","detail":"%s","running":"%s","candidate":"%s"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${DRILL_TAG}" "$2" "${3:-}" "${4:-}" >>"${LOG_FILE}"
 }
 
 die() {

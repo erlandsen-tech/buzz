@@ -40,6 +40,11 @@ SEATS=(
 # Drill hook: promote a deliberately broken image instead of the candidate, so
 # the rollback path can be exercised on purpose rather than asserted.
 FORCE_IMAGE="${BUZZ_PROMOTE_FORCE_IMAGE:-}"
+# Same reason as relay-autoupdate.sh: the nightly report reads the last line of
+# this log to colour its headline, and a drill rollback logged as a plain
+# `rolled_back` is indistinguishable from a real one.
+DRILL_TAG=""
+[[ -n "${FORCE_IMAGE}" ]] && DRILL_TAG="_drill"
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 
@@ -48,8 +53,8 @@ log_json() {
   # start-of-run TS made a cutover and the rollback that followed it minutes
   # later share one timestamp, which reads as an instant rollback and hides
   # how long the readiness gate actually waited.
-  printf '{"ts":"%s","outcome":"%s","detail":"%s","sprig":"%s"}\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "${SPRIG_DIGEST:-}" >>"${LOG_FILE}"
+  printf '{"ts":"%s","outcome":"%s%s","detail":"%s","sprig":"%s"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "${DRILL_TAG}" "$2" "${SPRIG_DIGEST:-}" >>"${LOG_FILE}"
 }
 
 die() {

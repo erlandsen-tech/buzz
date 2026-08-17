@@ -66,9 +66,17 @@ relay_line="${relay_ts} ${relay_outcome}: $(last_detail "${RELAY_LOG}" detail)"
 # because the first version of this report called the night green while the relay
 # line right under it said the candidate had failed its gates and been rolled
 # back -- a green headline over a red body is worse than no report at all.
+# A `_drill` suffix means the job was run with a forced known-bad artifact to
+# exercise its rollback. That is a rehearsal, not a production outcome, so it is
+# labelled in the body and left out of the headline -- otherwise every drill
+# turns the next report red and the report stops meaning anything.
 bad=""
 case "${build_outcome}" in green|noop) ;; *) bad="bygg=${build_outcome:-ukjent}" ;; esac
-case "${promote_outcome}" in off|promoted) ;; *) bad="${bad:+${bad} }promote=${promote_outcome}" ;; esac
+case "${promote_outcome}" in
+  off|promoted) ;;
+  *_drill) promote_line="${promote_line} [ovelse - tvunget image, ikke et produksjonsresultat]" ;;
+  *) bad="${bad:+${bad} }promote=${promote_outcome}" ;;
+esac
 # A rollback is the guardrail working, not an outage -- but it means the relay is
 # still on the old digest and someone has to look. Judged only while fresh: past
 # the window the line is stale, which is its own red (a dead timer reports nothing
@@ -80,7 +88,11 @@ elif (( relay_age > RELAY_STALE_HOURS )); then
   bad="${bad:+${bad} }relay=foreldet"
   relay_line="${relay_line} [${relay_age}t gammel - relay-timeren har ikke kjort]"
 else
-  case "${relay_outcome}" in deployed|noop) ;; *) bad="${bad:+${bad} }relay=${relay_outcome}" ;; esac
+  case "${relay_outcome}" in
+    deployed|noop) ;;
+    *_drill) relay_line="${relay_line} [ovelse - tvunget digest, ikke et produksjonsresultat]" ;;
+    *) bad="${bad:+${bad} }relay=${relay_outcome}" ;;
+  esac
 fi
 
 if [[ -z "${bad}" ]]; then
