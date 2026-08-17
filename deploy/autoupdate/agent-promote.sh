@@ -41,12 +41,15 @@ SEATS=(
 # the rollback path can be exercised on purpose rather than asserted.
 FORCE_IMAGE="${BUZZ_PROMOTE_FORCE_IMAGE:-}"
 
-TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 
 log_json() {
+  # Stamped when the line is written, not when the script started. A single
+  # start-of-run TS made a cutover and the rollback that followed it minutes
+  # later share one timestamp, which reads as an instant rollback and hides
+  # how long the readiness gate actually waited.
   printf '{"ts":"%s","outcome":"%s","detail":"%s","sprig":"%s"}\n' \
-    "${TS}" "$1" "$2" "${SPRIG_DIGEST:-}" >>"${LOG_FILE}"
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "${SPRIG_DIGEST:-}" >>"${LOG_FILE}"
 }
 
 die() {

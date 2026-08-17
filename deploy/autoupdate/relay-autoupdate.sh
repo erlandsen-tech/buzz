@@ -37,13 +37,12 @@ COMPOSE_FILES=(
 
 mkdir -p "${STATE_DIR}/backups"
 
-TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 
 log_json() {
   # log_json <outcome> <detail> [running_digest] [candidate_digest]
   printf '{"ts":"%s","outcome":"%s","detail":"%s","running":"%s","candidate":"%s"}\n' \
-    "${TS}" "$1" "$2" "${3:-}" "${4:-}" >>"${LOG_FILE}"
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "${3:-}" "${4:-}" >>"${LOG_FILE}"
 }
 
 die() {

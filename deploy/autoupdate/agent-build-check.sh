@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Nightly build-and-test of the agent images against the newest upstream sprig.
 #
-# Deliberately does NOT deploy. The agent containers are the crew; a 04:30
-# rebuild that breaks Hermes, ED-209 and Swordfish at once leaves nobody able to
-# fix it. This job only answers "could we upgrade right now if we wanted to?",
-# so promotion stays a manual, awake-human decision.
+# This script never deploys. It answers "could we upgrade right now if we
+# wanted to?" and stops there. Deploying is agent-promote.sh's job, gated on
+# PROMOTE_ENABLED, because a rebuild that breaks Hermes, ED-209 and Swordfish
+# at once leaves nobody able to fix it -- so that step carries its own
+# readiness gate and its own rollback. nightly.sh runs the two in order.
 set -euo pipefail
 
 STATE_DIR=/opt/buzz-autoupdate
@@ -60,12 +61,11 @@ aliases_of() {
 # Asserted for every seat: the ACP runtime the entrypoint execs into.
 COMMON_SMOKE='command -v sprig-entrypoint >/dev/null; command -v buzz-acp >/dev/null; command -v buzz >/dev/null'
 
-TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 log_json() {
   printf '{"ts":"%s","outcome":"%s","detail":"%s","sprig":"%s"}\n' \
-    "${TS}" "$1" "$2" "${SPRIG_DIGEST:-}" >>"${LOG_FILE}"
-  printf '%s %s %s\n' "${TS}" "$1" "$2" >"${STATUS_FILE}"
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "${SPRIG_DIGEST:-}" >>"${LOG_FILE}"
+  printf '%s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" >"${STATUS_FILE}"
 }
 
 die() {
