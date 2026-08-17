@@ -48,6 +48,11 @@ all_images() {
       [[ "${primary}" == "${image}" ]] && printf '%s\n' ${rest}
     done
   done
+  # Explicit: the last [[ ]] above fails for every non-matching row, and with
+  # `set -e` plus pipefail an assignment like IMAGE_COUNT="$(all_images | wc -l)"
+  # then kills the script -- which is how a successful run exited before writing
+  # its own green line and left a stale status behind.
+  return 0
 }
 
 aliases_of() {
@@ -56,6 +61,7 @@ aliases_of() {
     IFS='|' read -r primary rest <<<"${aliasrow}"
     [[ "${primary}" == "$1" ]] && printf '%s\n' ${rest}
   done
+  return 0
 }
 
 # Asserted for every seat: the ACP runtime the entrypoint execs into.
