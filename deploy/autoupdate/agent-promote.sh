@@ -101,12 +101,15 @@ wait_for_fleet() {
 [[ -e "${PROMOTE_SWITCH}" ]] || { log_json skipped "promotion not enabled (touch ${PROMOTE_SWITCH})"; exit 0; }
 [[ -f "${ENV_FILE}" ]] || die error "missing ${ENV_FILE}"
 
-# Only ever promote what tonight's build check actually proved.
-grep -q ' green ' "${STATUS_FILE}" 2>/dev/null ||
-  die blocked "last build check was not green: $(cat "${STATUS_FILE}" 2>/dev/null || echo missing)"
+# Only ever promote what the build check actually proved. `noop` counts: it
+# means the images were already built green against this same sprig digest.
+# Match the outcome field rather than grepping the whole line -- the noop
+# message contains the word "green", so a line grep passed on its own prose.
+BUILD_OUTCOME="$(awk '{print $2}' "${STATUS_FILE}" 2>/dev/null || true)"
+[[ "${BUILD_OUTCOME}" == green || "${BUILD_OUTCOME}" == noop ]] ||
+  die blocked "last build check was ${BUILD_OUTCOME:-missing}, not green: $(cat "${STATUS_FILE}" 2>/dev/null || echo missing)"
 
-SPRIG_DIGEST="$(grep ' green \| noop ' "${STATUS_FILE}" >/dev/null && tail -n1 "${BUILD_LOG}" |
-  sed -e 's/.*"sprig":"\([^"]*\)".*/\1/')"
+SPRIG_DIGEST="$(tail -n1 "${BUILD_LOG}" | sed -e 's/.*"sprig":"\([^"]*\)".*/\1/')"
 [[ "${SPRIG_DIGEST}" == sha256:* ]] || die blocked "could not read the sprig digest the build check used"
 SHORT="${SPRIG_DIGEST#sha256:}"; SHORT="${SHORT:0:12}"
 

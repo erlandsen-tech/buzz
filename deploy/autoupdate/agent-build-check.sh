@@ -95,10 +95,25 @@ SPRIG_DIGEST="$(curl -sf --max-time 20 -D - -o /dev/null \
 SHORT="${SPRIG_DIGEST#sha256:}"; SHORT="${SHORT:0:12}"
 SPRIG_REF="${SPRIG_REPO}:main@${SPRIG_DIGEST}"
 
-# Nothing upstream changed and the last run was green -> no reason to rebuild.
-if [[ -f "${STATUS_FILE}" ]] && grep -q " green " "${STATUS_FILE}" &&
-  grep -q "\"sprig\":\"${SPRIG_DIGEST}\"" "${LOG_FILE}" 2>/dev/null; then
-  log_json noop "already built green against this sprig"
+# Nothing upstream changed and the last run already succeeded -> no reason to
+# rebuild. Match the outcome field, not the line: the previous `grep -q " green "`
+# also matched the word inside a noop line's own message ("already built green
+# against this sprig"), so the guard was reading its own prose as a result.
+LAST_OUTCOME="$(awk '{print $2}' "${STATUS_FILE}" 2>/dev/null || true)"
+have_all_candidates() {
+  local image
+  while read -r image; do
+    docker image inspect "${image}:candidate-${SHORT}" >/dev/null 2>&1 || return 1
+  done < <(all_images)
+  return 0
+}
+# The log saying we built is not the same as the images being there: candidates
+# get pruned, and adding a seat adds an image name no past run ever tagged. Ask
+# the daemon, not the record.
+if [[ "${LAST_OUTCOME}" == green || "${LAST_OUTCOME}" == noop ]] &&
+  grep -q "\"sprig\":\"${SPRIG_DIGEST}\"" "${LOG_FILE}" 2>/dev/null &&
+  have_all_candidates; then
+  log_json noop "candidates for every seat image already built against this sprig"
   exit 0
 fi
 
