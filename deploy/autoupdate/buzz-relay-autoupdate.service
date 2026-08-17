@@ -1,0 +1,9 @@
+[Unit]
+Description=Guardrailed auto-update of the buzz relay from ghcr.io/block/buzz:main
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/buzz-autoupdate/relay-autoupdate.sh
+TimeoutStartSec=900
