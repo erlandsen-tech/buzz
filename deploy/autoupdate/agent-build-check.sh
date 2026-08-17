@@ -25,6 +25,38 @@ TARGETS=(
   "Dockerfile.pi|buzz-prod-pi-agent|command -v pi >/dev/null; command -v pi-acp >/dev/null; command -v pi-agent-entrypoint >/dev/null"
 )
 
+# Five of the seven seats build from the same Dockerfile.goose, but only
+# `goose-agent` declares an `image:` matching the primary target above. Compose
+# names the other four <project>-<service>, so they are separate image *names*
+# carrying identical content. Building once and tagging the result onto all of
+# them is what makes a later promote reach the whole fleet -- tagging only the
+# primary upgrades 3 of 7 seats and splits the fleet across two buzz-acp
+# versions with no error anywhere. image|alias alias...
+ALIASES=(
+  "buzz-prod-goose-agent|buzz-prod-goose-crash buzz-prod-goose-ed209 buzz-prod-goose-mcp buzz-prod-goose-swordfish"
+)
+
+# Every image name a promote must touch, primaries and aliases together.
+all_images() {
+  local target image aliasrow primary rest
+  for target in "${TARGETS[@]}"; do
+    IFS='|' read -r _ image _ <<<"${target}"
+    printf '%s\n' "${image}"
+    for aliasrow in "${ALIASES[@]}"; do
+      IFS='|' read -r primary rest <<<"${aliasrow}"
+      [[ "${primary}" == "${image}" ]] && printf '%s\n' ${rest}
+    done
+  done
+}
+
+aliases_of() {
+  local aliasrow primary rest
+  for aliasrow in "${ALIASES[@]}"; do
+    IFS='|' read -r primary rest <<<"${aliasrow}"
+    [[ "${primary}" == "$1" ]] && printf '%s\n' ${rest}
+  done
+}
+
 # Asserted for every seat: the ACP runtime the entrypoint execs into.
 COMMON_SMOKE='command -v sprig-entrypoint >/dev/null; command -v buzz-acp >/dev/null; command -v buzz >/dev/null'
 
@@ -101,21 +133,27 @@ for target in "${TARGETS[@]}"; do
   fi
 
   built+=("${tag}")
+
+  # Same content, other seats' image names, so a promote can retag all seven.
+  while read -r alias_image; do
+    [[ -n "${alias_image}" ]] || continue
+    docker tag "${tag}" "${alias_image}:candidate-${SHORT}"
+  done < <(aliases_of "${image}")
 done
 
 # Keep a couple of candidates for manual promotion; drop the rest so nightly
 # builds cannot fill the disk.
-for target in "${TARGETS[@]}"; do
-  IFS='|' read -r _ image _ <<<"${target}"
+while read -r image; do
   docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' |
     awk -v img="${image}" '$1 ~ "^"img":candidate-" {print $1}' |
     tail -n "+$((KEEP_CANDIDATES + 1))" |
     xargs -r -n1 docker rmi -f >/dev/null 2>&1 || true
-done
+done < <(all_images)
 
 if ((${#failures[@]} > 0)); then
   die red "$(printf '%s; ' "${failures[@]}")candidates built: ${#built[@]}/${#TARGETS[@]}"
 fi
 
-log_json green "all ${#TARGETS[@]} agent images build and smoke-test against sprig main; promote manually with: docker tag <candidate> <image>:latest && run.sh up -d"
+IMAGE_COUNT="$(all_images | wc -l | tr -d ' ')"
+log_json green "${#TARGETS[@]} builds cover ${IMAGE_COUNT} seat images and all smoke-test against sprig main; promote with ${STATE_DIR}/agent-promote.sh (never a bare docker tag -- that reaches 3 of ${IMAGE_COUNT})"
 echo "buzz-agent-build-check: green against ${SPRIG_REF}"

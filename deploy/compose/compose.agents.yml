@@ -7,6 +7,8 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile.goose
+      args:
+        SPRIG_IMAGE: ${BUZZ_SPRIG_IMAGE:-ghcr.io/block/buzz-sprig:sha-068a83b@sha256:913da5e734c22167ee9ece8854d11a036894fdc3db1b3c8ed0391e89c5e9b23a}
     environment:
       # Use the public URL so the relay sees the same community host as Desktop.
       BUZZ_RELAY_URL: ${BUZZ_AGENT_RELAY_URL:?set BUZZ_AGENT_RELAY_URL}
@@ -104,6 +106,8 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile.goose
+      args:
+        SPRIG_IMAGE: ${BUZZ_SPRIG_IMAGE:-ghcr.io/block/buzz-sprig:sha-068a83b@sha256:913da5e734c22167ee9ece8854d11a036894fdc3db1b3c8ed0391e89c5e9b23a}
     environment:
       BUZZ_RELAY_URL: ${BUZZ_AGENT_RELAY_URL:?set BUZZ_AGENT_RELAY_URL}
       BUZZ_PRIVATE_KEY: ${BUZZ_MCP_PRIVATE_KEY:?set BUZZ_MCP_PRIVATE_KEY}
@@ -195,6 +199,8 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile.goose
+      args:
+        SPRIG_IMAGE: ${BUZZ_SPRIG_IMAGE:-ghcr.io/block/buzz-sprig:sha-068a83b@sha256:913da5e734c22167ee9ece8854d11a036894fdc3db1b3c8ed0391e89c5e9b23a}
     environment:
       BUZZ_RELAY_URL: ${BUZZ_AGENT_RELAY_URL:?set BUZZ_AGENT_RELAY_URL}
       BUZZ_PRIVATE_KEY: ${BUZZ_ED209_PRIVATE_KEY:?set BUZZ_ED209_PRIVATE_KEY}
@@ -292,6 +298,8 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile.goose
+      args:
+        SPRIG_IMAGE: ${BUZZ_SPRIG_IMAGE:-ghcr.io/block/buzz-sprig:sha-068a83b@sha256:913da5e734c22167ee9ece8854d11a036894fdc3db1b3c8ed0391e89c5e9b23a}
     environment:
       BUZZ_RELAY_URL: ${BUZZ_AGENT_RELAY_URL:?set BUZZ_AGENT_RELAY_URL}
       BUZZ_PRIVATE_KEY: ${BUZZ_CRASH_PRIVATE_KEY:?set BUZZ_CRASH_PRIVATE_KEY}
@@ -383,6 +391,8 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile.hermes
+      args:
+        SPRIG_IMAGE: ${BUZZ_SPRIG_IMAGE:-ghcr.io/block/buzz-sprig:sha-068a83b@sha256:913da5e734c22167ee9ece8854d11a036894fdc3db1b3c8ed0391e89c5e9b23a}
     image: buzz-prod-goose-hermes:latest
     environment:
       BUZZ_RELAY_URL: ${BUZZ_AGENT_RELAY_URL:?set BUZZ_AGENT_RELAY_URL}
@@ -451,6 +461,8 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile.goose
+      args:
+        SPRIG_IMAGE: ${BUZZ_SPRIG_IMAGE:-ghcr.io/block/buzz-sprig:sha-068a83b@sha256:913da5e734c22167ee9ece8854d11a036894fdc3db1b3c8ed0391e89c5e9b23a}
     environment:
       BUZZ_RELAY_URL: ${BUZZ_AGENT_RELAY_URL:?set BUZZ_AGENT_RELAY_URL}
       BUZZ_PRIVATE_KEY: ${BUZZ_GIBSON_PRIVATE_KEY:?set BUZZ_GIBSON_PRIVATE_KEY}
@@ -622,6 +634,8 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile.pi
+      args:
+        SPRIG_IMAGE: ${BUZZ_SPRIG_IMAGE:-ghcr.io/block/buzz-sprig:sha-068a83b@sha256:913da5e734c22167ee9ece8854d11a036894fdc3db1b3c8ed0391e89c5e9b23a}
     environment:
       BUZZ_RELAY_URL: ${BUZZ_AGENT_RELAY_URL:?set BUZZ_AGENT_RELAY_URL}
       # Soft interpolation on the pi-only values: compose interpolates the whole

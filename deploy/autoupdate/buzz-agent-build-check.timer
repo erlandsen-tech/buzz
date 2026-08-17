@@ -1,8 +1,12 @@
 [Unit]
-Description=Nightly agent image build check (02:30 UTC)
+Description=Nightly agent build check, optional promote, and channel report (19:00 UTC)
 
 [Timer]
-OnCalendar=*-*-* 02:30:00
+# Evening on purpose (21:00 CEST): the owner asked for a nightly update, and a
+# job that can recreate all seven seats should land while somebody is awake to
+# read the report it posts. The relay update follows 45 minutes later so the
+# two never recreate containers at the same time.
+OnCalendar=*-*-* 19:00:00
 Persistent=false
 RandomizedDelaySec=600
 
