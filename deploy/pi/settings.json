@@ -1,4 +1,4 @@
 {
   "defaultProvider": "openrouter",
-  "defaultModel": "moonshotai/kimi-k2.6"
+  "defaultModel": "z-ai/glm-5.2"
 }

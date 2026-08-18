@@ -1,3 +1,25 @@
+# Per-seat model pins, 2026-08-18 (owner decision: "scenario B", John Inge).
+# The pins themselves live in .env, which is gitignored, so they are recorded
+# here to survive a clean redeploy. Chosen on measured per-seat token volume
+# repriced against the live OpenRouter catalogue -- not on list price alone,
+# because cache-read dominates every seat's bill.
+#
+#   BUZZ_GIBSON_MODEL  Swordfish       google/gemini-3.7-flash   (unchanged)
+#   BUZZ_MCP_MODEL     MCP             z-ai/glm-5.2              (was x-ai/grok-4.5)
+#   BUZZ_CRASH_MODEL   Crash Override  qwen/qwen3-coder-plus     (was qwen/qwen3.8-max)
+#   BUZZ_ED209_MODEL   ED-209          google/gemini-3.7-flash   (was google/gemini-3.6-flash)
+#   BUZZ_AGENT_MODEL   Drone           minimax/minimax-m3        (was qwen/qwen3.8-max)
+#   BUZZ_NIKON_MODEL   Lord Nikon      openai/gpt-5.6-terra      (unchanged)
+#   pi-agent           Acid Burn       z-ai/glm-5.2              (was moonshotai/kimi-k2.6)
+#
+# Two invariants the next change must not break: Drone must not share a model
+# family with Crash Override (its certifier) or with Acid Burn (the other
+# implementer). Drone leaving Qwen is what frees Crash Override to stay in it.
+#
+# Quality has NOT been gated. Each seat answered a tool-call smoke test on its
+# new model; no acceptance pack has been run. Measure token volume as well as
+# quality before trusting the saving -- a cheaper model that needs more turns
+# is a net loss.
 services:
   goose-agent:
     # Resource ceiling (owner decision 2026-08-17). Ceilings, not
@@ -706,7 +728,7 @@ services:
       BUZZ_ACP_MCP_COMMAND: ""
       # SECONDARY model request only — the PRIMARY pin is deploy/pi/settings.json,
       # image-seeded into the fresh home volume (see Dockerfile.pi).
-      BUZZ_ACP_MODEL: openrouter/moonshotai/kimi-k2.6
+      BUZZ_ACP_MODEL: openrouter/z-ai/glm-5.2
       # 2026-08-17: raised 1 -> 5 for fleet parity (owner decision). The
       # state-safety review this comment asked for has NOT been done: all
       # concurrent turns share one /workspace and one git checkout, so two
